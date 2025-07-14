@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
@@ -12,7 +13,6 @@ from telegram.ext import (
 )
 
 # --- CONFIGURAÇÕES ---
-import os
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -186,6 +186,7 @@ async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🗑️ Selecione o produto a excluir:",
         reply_markup=ReplyKeyboardMarkup(products, resize_keyboard=True)
+    )
     return AWAIT_DELETION
 
 async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,26 +294,25 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             MAIN_MENU: [
-                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), 
-                    lambda update, context: handle_product_name(update, context, is_new=True)),
+                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), handle_product_name),
                 MessageHandler(filters.Regex("^❌ Excluir Produto$"), delete_product),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
                 MessageHandler(filters.Regex("^🕒 Histórico$"), 
-                    lambda update, context: show_history(update, context, from_button=True)),
+                    lambda update, context: show_history(update, context)),
                 MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
-            ],
-            AWAIT_PRODUCT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
             ],
             AWAIT_DETAILS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_details)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_details),
+                CommandHandler("cancelar", cancel)
             ],
             AWAIT_DELETION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion),
+                CommandHandler("cancelar", cancel)
             ],
             CONFIRM_DELETION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion),
+                CommandHandler("cancelar", cancel)
             ]
         },
         fallbacks=[
@@ -325,35 +325,8 @@ def main():
     
     application.add_handler(conv_handler)
     
-    # Servidor web para manter o bot ativo
-    from flask import Flask
-    from threading import Thread
-    
-    app = Flask(__name__)
-    
-    @app.route('/')
-    def home():
-        return "Bot de Compras Online ✅"
-    
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    
+    # Configuração para o Render + UptimeRobot
     application.run_polling()
 
-from flask import Flask
-from threading import Thread
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot de Compras Online ✅", 200
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-# Inicia o Flask em uma thread separada
-Thread(target=run_flask).start()
-# ======================================
-
 if __name__ == "__main__":
-    main()  # Esta linha JÁ deve existir no seu código
+    main()
