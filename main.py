@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 
 # --- ESTADOS DA CONVERSA ---
-MAIN_MENU, AWAIT_PRODUCT, AWAIT_DETAILS = range(3)
+MAIN_MENU, AWAIT_PRODUCT, AWAIT_DETAILS, AWAIT_DELETION, CONFIRM_DELETION = range(5)
 
 # --- BANCO DE DADOS ---
 def load_data():
@@ -37,10 +37,10 @@ def save_data(data):
 # --- TELCADOS ---
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("➕ Adicionar Produto")],
+        [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("❌ Excluir Produto")],
         [KeyboardButton("📋 Listar Produtos"), KeyboardButton("🕒 Histórico")],
         [KeyboardButton("ℹ️ Ajuda")]
-    ], resize_keyboard=True, input_field_placeholder="Escolha uma opção")
+    ], resize_keyboard=True)
 
 def cancel_keyboard():
     return ReplyKeyboardMarkup(
@@ -59,32 +59,6 @@ async def show_main_menu(update: Update, message: str):
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
-
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    
-    if text == "➕ Adicionar Produto":
-        await update.message.reply_text(
-            "📝 Digite o nome do produto (ex: 'Mussarela'):",
-            reply_markup=cancel_keyboard()
-        )
-        return AWAIT_PRODUCT
-        
-    elif text == "📋 Listar Produtos":
-        return await list_products(update, context)
-        
-    elif text == "🕒 Histórico":
-        await update.message.reply_text(
-            "Digite o nome do produto para ver o histórico (ex: 'Mussarela'):",
-            reply_markup=cancel_keyboard()
-        )
-        return AWAIT_PRODUCT
-        
-    elif text == "ℹ️ Ajuda":
-        return await help_command(update, context)
-        
-    else:
-        return await handle_product_name(update, context)
 
 # --- PRODUTOS ---
 async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,23 +100,133 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
         details = update.message.text.split()
         data = load_data()
         
-        # Processamento dos dados (mantido igual ao anterior)
-        # ... (código de processamento dos produtos)
+        # Processamento para Papel Higiênico
+        if "Papel Higiênico" in product:
+            rolos, metros, preco = float(details[0]), float(details[1]), float(details[2])
+            preco_por_metro = preco / metros
+            preco_por_rolo = preco / rolos
+            
+            data["produtos"][product] = {
+                "categoria": "Limpeza",
+                "rolos": rolos,
+                "metros": metros,
+                "preco": preco,
+                "preco_por_metro": preco_por_metro,
+                "preco_por_rolo": preco_por_rolo,
+                "unidade": "metros",
+                "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
+            }
+            
+            msg = f"🧻 *{product}*\n• {rolos} rolos | {metros}m\n• Preço: R${preco:.2f}"
+
+        # Processamento para Frios
+        elif any(p in product for p in ["Queijo", "Presunto", "Mussarela", "Peito de Peru"]):
+            peso, preco = float(details[0]), float(details[1])
+            preco_por_kg = preco / peso
+            
+            data["produtos"][product] = {
+                "categoria": "Frios",
+                "peso": peso,
+                "preco": preco,
+                "preco_por_kg": preco_por_kg,
+                "unidade": "kg",
+                "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
+            }
+            
+            msg = f"🧀 *{product}*\n• Peso: {peso}kg\n• Preço: R${preco:.2f}"
+
+        # Outros produtos
+        else:
+            quantidade, unidade, preco = float(details[0]), details[1], float(details[2])
+            
+            data["produtos"][product] = {
+                "categoria": "Outros",
+                "quantidade": quantidade,
+                "unidade": unidade,
+                "preco": preco,
+                "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
+            }
+            
+            msg = f"📦 *{product}*\n• {quantidade} {unidade}\n• Preço: R${preco:.2f}"
+
+        # Atualiza histórico
+        if product not in data["historico"]:
+            data["historico"][product] = []
+        data["historico"][product].append({
+            "data": datetime.now().strftime("%Y-%m-%d"),
+            "preco": preco
+        })
         
-        await show_main_menu(update, f"✅ *{product} salvo com sucesso!*")
+        save_data(data)
+        await show_main_menu(update, f"✅ *{product}* salvo com sucesso!\n\n{msg}")
         return MAIN_MENU
         
     except Exception as e:
         await update.message.reply_text(
-            f"⚠️ Formato inválido. Por favor, use os exemplos:\n"
+            f"⚠️ Formato inválido. Por favor, use:\n"
             "• Frios: `0.5 25.00`\n"
             "• Papel Higiênico: `4 40 12.50`\n"
-            "• Outros: `2 litro 8.50`\n\n"
-            "Ou cancele com o botão abaixo:",
+            "• Outros: `2 litro 8.50`",
             parse_mode="Markdown",
             reply_markup=cancel_keyboard()
         )
         return AWAIT_DETAILS
+
+# --- EXCLUSÃO DE PRODUTOS ---
+async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    if not data["produtos"]:
+        await show_main_menu(update, "📭 Nenhum produto cadastrado para excluir.")
+        return MAIN_MENU
+    
+    # Cria teclado com produtos existentes
+    products = [[KeyboardButton(name)] for name in data["produtos"].keys()]
+    products.append([KeyboardButton("❌ Cancelar")])
+    
+    await update.message.reply_text(
+        "🗑️ Selecione o produto a excluir:",
+        reply_markup=ReplyKeyboardMarkup(products, resize_keyboard=True)
+    return AWAIT_DELETION
+
+async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+        
+    product = update.message.text
+    data = load_data()
+    
+    if product in data["produtos"]:
+        context.user_data['product_to_delete'] = product
+        await update.message.reply_text(
+            f"⚠️ Confirmar exclusão de *{product}*?\n\n"
+            f"Preço atual: R${data['produtos'][product]['preco']:.2f}\n"
+            "Digite 'SIM' para confirmar ou 'NÃO' para cancelar",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("✅ SIM"), KeyboardButton("❌ NÃO")]
+            ], resize_keyboard=True)
+        )
+        return CONFIRM_DELETION
+    else:
+        await show_main_menu(update, f"ℹ️ Produto '{product}' não encontrado.")
+        return MAIN_MENU
+
+async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.upper()
+    if text == "✅ SIM":
+        product = context.user_data['product_to_delete']
+        data = load_data()
+        
+        # Remove completamente o produto
+        data["produtos"].pop(product, None)
+        data["historico"].pop(product, None)
+        save_data(data)
+        
+        await show_main_menu(update, f"🗑️ *{product}* foi excluído permanentemente.")
+    else:
+        await show_main_menu(update, "❌ Exclusão cancelada.")
+    
+    return MAIN_MENU
 
 # --- COMANDOS ---
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,14 +269,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🛒 *Ajuda do Bot de Compras*\n\n"
         "🔹 *Como usar:*\n"
-        "1. Adicione produtos com preços\n"
-        "2. Consulte o histórico\n"
-        "3. Compare preços\n\n"
+        "• `➕ Adicionar Produto`: Cadastra novos itens\n"
+        "• `❌ Excluir Produto`: Remove produtos cadastrados\n"
+        "• `📋 Listar Produtos`: Mostra todos os itens\n"
+        "• `🕒 Histórico`: Consulta histórico de preços\n\n"
         "📝 *Formatos de entrada:*\n"
         "• Frios: `0.5 25.00` (0.5kg a R$25)\n"
         "• Papel Higiênico: `4 40 12.50` (4 rolos, 40m, R$12.50)\n"
-        "• Outros: `2 litro 8.50` (2 litros a R$8.50)\n\n"
-        "📌 Os botões estarão sempre disponíveis!"
+        "• Outros: `2 litro 8.50` (2 litros a R$8.50)"
     )
     await show_main_menu(update, help_text)
     return MAIN_MENU
@@ -209,6 +293,13 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             MAIN_MENU: [
+                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), 
+                    lambda update, context: handle_product_name(update, context, is_new=True)),
+                MessageHandler(filters.Regex("^❌ Excluir Produto$"), delete_product),
+                MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
+                MessageHandler(filters.Regex("^🕒 Histórico$"), 
+                    lambda update, context: show_history(update, context, from_button=True)),
+                MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
             ],
             AWAIT_PRODUCT: [
@@ -216,6 +307,12 @@ def main():
             ],
             AWAIT_DETAILS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_details)
+            ],
+            AWAIT_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)
+            ],
+            CONFIRM_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)
             ]
         },
         fallbacks=[
@@ -227,9 +324,6 @@ def main():
     )
     
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("ajuda", help_command))
-    application.add_handler(CommandHandler("listar", list_products))
-    application.add_handler(CommandHandler("historico", show_history))
     
     # Servidor web para manter o bot ativo
     from flask import Flask
