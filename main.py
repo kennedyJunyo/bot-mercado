@@ -62,7 +62,7 @@ async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     product = update.message.text.title()
     context.user_data['current_product'] = product
     data = load_data()
-
+    
     if product in data["produtos"]:
         last_price = data["produtos"][product]["preco"]
         await update.message.reply_text(
@@ -82,17 +82,22 @@ async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     return AWAIT_DETAILS
 
 async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # VERIFICAÇÃO DE CANCELAMENTO ADICIONADA AQUI
+    if update.message.text.lower() == "cancelar":
+        await cancel(update, context)
+        return MAIN_MENU
+    
     try:
         product = context.user_data['current_product']
         details = update.message.text.split()
         data = load_data()
-
+        
         # Processamento para Papel Higiênico
         if "Papel Higiênico" in product:
             rolos, metros, preco = float(details[0]), float(details[1]), float(details[2])
             preco_por_metro = preco / metros
             preco_por_rolo = preco / rolos
-
+            
             data["produtos"][product] = {
                 "categoria": "Limpeza",
                 "rolos": rolos,
@@ -103,7 +108,7 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
                 "unidade": "metros",
                 "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
             }
-
+            
             msg = (
                 f"🧻 *{product}*\n"
                 f"• {rolos} rolos | {metros}m\n"
@@ -111,12 +116,12 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
                 f"• Preço por metro: R${preco_por_metro:.4f}\n"
                 f"• Preço por rolo: R${preco_por_rolo:.2f}"
             )
-
+        
         # Processamento para Frios
         elif any(p in product for p in ["Queijo", "Presunto", "Mussarela", "Peito de Peru"]):
             peso, preco = float(details[0]), float(details[1])
             preco_por_kg = preco / peso
-
+            
             data["produtos"][product] = {
                 "categoria": "Frios",
                 "peso": peso,
@@ -125,18 +130,18 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
                 "unidade": "kg",
                 "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
             }
-
+            
             msg = (
                 f"🧀 *{product}*\n"
                 f"• Peso: {peso}kg\n"
                 f"• Preço total: R${preco:.2f}\n"
                 f"• Preço por kg: R${preco_por_kg:.2f}"
             )
-
+        
         # Outros produtos
         else:
             quantidade, unidade, preco = float(details[0]), details[1], float(details[2])
-
+            
             data["produtos"][product] = {
                 "categoria": "Outros",
                 "quantidade": quantidade,
@@ -144,7 +149,7 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
                 "preco": preco,
                 "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
             }
-
+            
             msg = (
                 f"📦 *{product}*\n"
                 f"• Quantidade: {quantidade} {unidade}\n"
@@ -156,12 +161,12 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
             data["historico"] = {}
         if product not in data["historico"]:
             data["historico"][product] = []
-
+        
         data["historico"][product].append({
             "data": datetime.now().strftime("%Y-%m-%d"),
             "preco": preco
         })
-
+        
         save_data(data)
         await update.message.reply_text(
             f"{msg}\n\n✅ *Dados salvos com sucesso!*",
@@ -169,13 +174,17 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
-
+    
     except Exception as e:
-        await update.message.reply_text(
-            f"⚠️ *Erro no formato:* {str(e)}\n"
-            "Digite os dados corretamente ou /cancel",
-            parse_mode="Markdown"
-        )
+        # MENSAGEM DE ERRO MELHORADA (SEGUNDO AJUSTE)
+        if "cancelar" not in update.message.text.lower():
+            await update.message.reply_text(
+                f"⚠️ Formato inválido. Exemplos:\n"
+                "• Frios: 0.5 25.00\n"
+                "• Papel Higiênico: 4 40 12.50\n\n"
+                "Ou digite 'Cancelar' para desistir",
+                parse_mode="Markdown"
+            )
         return AWAIT_DETAILS
 
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,13 +192,13 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data["produtos"]:
         await update.message.reply_text("📭 Nenhum produto cadastrado.")
         return MAIN_MENU
-
+    
     message = "📋 *Lista de Produtos*\n\n"
     for product, details in data["produtos"].items():
         message += f"🏷️ *{product}*\n"
         message += f"• Preço: R${details['preco']:.2f}\n"
         message += f"• Última atualização: {details['ultima_atualizacao']}\n\n"
-
+    
     await update.message.reply_text(
         message,
         parse_mode="Markdown",
@@ -205,7 +214,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
-
+    
     product = ' '.join(context.args).title()
     if product not in data.get("historico", {}):
         await update.message.reply_text(
@@ -213,12 +222,12 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
-
+    
     history = data["historico"][product][-5:]  # Últimos 5 registros
     message = f"📊 *Histórico de {product}*\n\n"
     for entry in history:
         message += f"📅 {entry['data']}: R${entry['preco']:.2f}\n"
-
+    
     await update.message.reply_text(
         message,
         parse_mode="Markdown",
@@ -252,7 +261,7 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MAIN ---
 def main():
     application = Application.builder().token(TOKEN).build()
-
+    
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -273,17 +282,16 @@ def main():
         },
         fallbacks=[CommandHandler("cancelar", cancel)]
     )
-
+    
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("listar", list_products))
     application.add_handler(CommandHandler("historico", show_history))
-
+    
     application.run_polling()
 
 from flask import Flask
 from threading import Thread
 
-# Cria um servidor web simples para evitar timeout
 app = Flask(__name__)
 
 @app.route('/')
@@ -293,7 +301,6 @@ def home():
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
-# Inicia o Flask em uma thread separada
 Thread(target=run_flask).start()
 
 if __name__ == "__main__":
