@@ -339,5 +339,21 @@ def main():
     
     application.run_polling()
 
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot de Compras Online ✅", 200
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# Inicia o Flask em uma thread separada
+Thread(target=run_flask).start()
+# ======================================
+
 if __name__ == "__main__":
-    main()
+    main()  # Esta linha JÁ deve existir no seu código
