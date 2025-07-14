@@ -73,6 +73,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "❌ Operação cancelada.",
+        reply_markup=main_menu_keyboard()
+    )
+    return MAIN_MENU
+
+# --- PRODUTOS ---
 async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
@@ -111,7 +119,6 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
         details = update.message.text.split()
         data = load_data()
         
-        # Processamento dos dados (igual ao seu código original)
         if "Papel Higiênico" in product:
             rolos, metros, preco = float(details[0]), float(details[1]), float(details[2])
             data["produtos"][product] = {
@@ -144,7 +151,14 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
                 "ultima_atualizacao": datetime.now().strftime("%Y-%m-%d")
             }
         
-        # Salva e envia confirmação
+        # Atualiza histórico
+        if product not in data["historico"]:
+            data["historico"][product] = []
+        data["historico"][product].append({
+            "data": datetime.now().strftime("%Y-%m-%d"),
+            "preco": data["produtos"][product]["preco"]
+        })
+        
         save_data(data)
         await update.message.reply_text(
             f"✅ *{product}* salvo com sucesso!",
@@ -165,8 +179,143 @@ async def handle_product_details(update: Update, context: ContextTypes.DEFAULT_T
         )
         return AWAIT_DETAILS
 
-# --- (MANTENHA O RESTO DO SEU CÓDIGO ORIGINAL, como delete_product, list_products, etc.) ---
+# --- EXCLUSÃO DE PRODUTOS ---
+async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    if not data["produtos"]:
+        await update.message.reply_text(
+            "📭 Nenhum produto cadastrado para excluir.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+    
+    products = [[KeyboardButton(name)] for name in data["produtos"].keys()]
+    products.append([KeyboardButton("❌ Cancelar")])
+    
+    await update.message.reply_text(
+        "🗑️ Selecione o produto a excluir:",
+        reply_markup=ReplyKeyboardMarkup(products, resize_keyboard=True)
+    )
+    return AWAIT_DELETION
 
+async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    
+    product = update.message.text
+    data = load_data()
+    
+    if product in data["produtos"]:
+        context.user_data['product_to_delete'] = product
+        await update.message.reply_text(
+            f"⚠️ Confirmar exclusão de *{product}*?\n\n"
+            f"Preço atual: R${data['produtos'][product]['preco']:.2f}\n"
+            "Digite 'SIM' para confirmar ou 'NÃO' para cancelar",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("✅ SIM"), KeyboardButton("❌ NÃO")]
+            ], resize_keyboard=True)
+        )
+        return CONFIRM_DELETION
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Produto '{product}' não encontrado.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+
+async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.upper()
+    if text == "✅ SIM":
+        product = context.user_data['product_to_delete']
+        data = load_data()
+        data["produtos"].pop(product, None)
+        data["historico"].pop(product, None)
+        save_data(data)
+        await update.message.reply_text(
+            f"🗑️ *{product}* foi excluído permanentemente.",
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "❌ Exclusão cancelada.",
+            reply_markup=main_menu_keyboard()
+        )
+    return MAIN_MENU
+
+# --- LISTAGEM E HISTÓRICO ---
+async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = load_data()
+    if not data["produtos"]:
+        await update.message.reply_text(
+            "📭 Nenhum produto cadastrado.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+    
+    message = "📋 *Lista de Produtos*\n\n"
+    for product, details in data["produtos"].items():
+        message += f"🏷️ *{product}*\n• Preço: R${details['preco']:.2f}\n\n"
+    
+    await update.message.reply_text(
+        message,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    product = ' '.join(context.args).title() if context.args else None
+    
+    if not product:
+        await update.message.reply_text(
+            "🔍 Digite o nome do produto para ver o histórico (ex: '/historico Mussarela')",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+    
+    data = load_data()
+    if product not in data.get("historico", {}):
+        await update.message.reply_text(
+            f"ℹ️ Nenhum histórico para {product}",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+    
+    history = data["historico"][product][-5:]
+    message = f"📊 *Histórico de {product}*\n\n"
+    for entry in history:
+        message += f"📅 {entry['data']}: R${entry['preco']:.2f}\n"
+    
+    await update.message.reply_text(
+        message,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🛒 *Ajuda do Bot de Compras*\n\n"
+        "🔹 *Como usar:*\n"
+        "• `➕ Adicionar Produto`: Cadastra novos itens\n"
+        "• `❌ Excluir Produto`: Remove produtos cadastrados\n"
+        "• `📋 Listar Produtos`: Mostra todos os itens\n"
+        "• `🕒 Histórico`: Consulta histórico de preços\n\n"
+        "📝 *Formatos de entrada:*\n"
+        "• Frios: `0.5 25.00` (0.5kg a R$25)\n"
+        "• Papel Higiênico: `4 40 12.50` (4 rolos, 40m, R$12.50)\n"
+        "• Outros: `2 litro 8.50` (2 litros a R$8.50)"
+    )
+    await update.message.reply_text(
+        help_text,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+# --- MAIN ---
 def main():
     check_data_file()  # Garante que o arquivo existe
     application = Application.builder().token(TOKEN).build()
@@ -183,6 +332,12 @@ def main():
             ],
             AWAIT_DETAILS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_details)
+            ],
+            AWAIT_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)
+            ],
+            CONFIRM_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)
             ]
         },
         fallbacks=[CommandHandler("cancelar", cancel)]
