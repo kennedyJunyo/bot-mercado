@@ -332,8 +332,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MAIN ---
 async def main():
     check_data_file()
-    application = Application.builder().token(TOKEN).build()
     
+    # Inicializa a aplicação corretamente
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .concurrent_updates(True)  # Adicionado para melhor desempenho
+        .build()
+    )
+    
+    # Configuração do ConversationHandler
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -353,14 +361,20 @@ async def main():
     
     application.add_handler(conv_handler)
     
+    # Inicializa o bot corretamente
+    await application.initialize()  # ← Esta linha estava faltando!
     await application.bot.delete_webhook(drop_pending_updates=True)
     await application.start()
     
+    # Inicia Flask em segundo plano
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        await application.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
