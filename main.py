@@ -171,6 +171,11 @@ async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === FLASK + WEBHOOK ===
 app = Flask(__name__)
+
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    return "OK", 200
+
 application = None
 
 @app.route("/webhook", methods=["POST"])
