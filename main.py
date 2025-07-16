@@ -167,13 +167,15 @@ def build_conv_handler():
 # === FLASK + WEBHOOK SETUP ===
 app = Flask(__name__)
 application = None
+loop = None  # Event loop global/shared
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, application.bot)
-        asyncio.run(application.process_update(update))
+        # Agendar processamento do update no loop global
+        loop.call_soon_threadsafe(asyncio.create_task, application.process_update(update))
         return "OK", 200
     except Exception as e:
         logging.error(f"Erro no webhook: {e}")
@@ -203,7 +205,6 @@ async def start_bot():
     logging.info(f"Webhook configurado: {webhook_url}")
 
     await application.start()
-
     while True:
         await asyncio.sleep(3600)
 
