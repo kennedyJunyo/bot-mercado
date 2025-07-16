@@ -172,9 +172,12 @@ loop = None  # Event loop global/shared
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
+        # 🔒 Segurança: garante que loop e application estão prontos antes do processamento
+        if not application or not loop:
+            logging.error("Application ou event loop não inicializados!")
+            return "Loop não iniciado", 500
         json_data = request.get_json(force=True)
         update = Update.de_json(json_data, application.bot)
-        # Agendar processamento do update no loop global
         loop.call_soon_threadsafe(asyncio.create_task, application.process_update(update))
         return "OK", 200
     except Exception as e:
