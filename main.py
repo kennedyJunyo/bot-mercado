@@ -40,7 +40,7 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     update = Update.de_json(request.get_json(), application.bot)
-    application.process_update(update)
+    asyncio.create_task(application.process_update(update))
     return "OK", 200
 
 @app.route("/healthz")
