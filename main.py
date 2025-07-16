@@ -81,14 +81,14 @@ async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     sheet = get_sheet()
     rows = sheet.get_all_values()[1:]  # Ignora cabeçalho
-    produtos = [row[0] for row in rows]
     historico = [row for row in rows if row[0] == text]
 
     format_message = (
-        "📝 *Formato de entrada:*\n"
-        "• Frios: `0.5 kg`\n"
-        "• Papel Higiênico: `4 rolos 40`\n"
-        "• Outros: `2 litro`"
+        "📝 Formatos de entrada:\n"
+        "• Frios: `0.5 kg 25.00`\n"
+        "• Papel Higiênico: `4 rolos 40m 12.50`\n"
+        "• Outros: `200g 2.69`, `1 caixa 3.99`\n"
+        "Você pode informar quantidade/unidade e preço juntos, ou só os detalhes."
     )
     # Se existe histórico, mostrar último preço e pergunta detalhes
     if historico:
@@ -107,37 +107,68 @@ async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     return AWAIT_DETAILS
 
-async def ask_product_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "❌ Cancelar":
-        return await cancel(update, context)
-    context.user_data["detalhes"] = update.message.text
-    await update.message.reply_text(
-        "Digite o preço do produto (ex: 8.50):",
-        reply_markup=cancel_keyboard()
-    )
-    return AWAIT_PRICE
-
-async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
     produto = context.user_data["current_product"]
-    detalhes = context.user_data["detalhes"]
+    detalhes_raw = update.message.text.strip()
+    detalhes_split = detalhes_raw.replace(",", ".").split()
+    preco = None
+
+    # Tenta identificar se preço foi informado na mesma mensagem (última parte é float)
+    try:
+        if len(detalhes_split) >= 2 and is_float(detalhes_split[-1]):
+            preco = float(detalhes_split[-1])
+            detalhes = " ".join(detalhes_split[:-1])
+        else:
+            detalhes = detalhes_raw
+    except Exception:
+        detalhes = detalhes_raw
+
+    if preco is not None:
+        # Salva direto
+        return await save_product_final(update, context, produto, detalhes, preco)
+    else:
+        context.user_data["detalhes"] = detalhes
+        await update.message.reply_text("Digite o preço do produto (ex: 8.50):", reply_markup=cancel_keyboard())
+        return AWAIT_PRICE
+
+def is_float(text):
+    try:
+        float(text)
+        return True
+    except Exception:
+        return False
+
+async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    produto = context.user_data["current_product"]
+    detalhes = context.user_data.get("detalhes", "")
     preco_str = update.message.text.replace(",", ".")
     try:
         preco = float(preco_str)
     except ValueError:
         await update.message.reply_text("⚠️ Preço inválido, tente novamente. Exemplo: 8.50", reply_markup=cancel_keyboard())
         return AWAIT_PRICE
+    return await save_product_final(update, context, produto, detalhes, preco)
 
+async def save_product_final(update, context, produto, detalhes, preco):
     detalhes_split = detalhes.split()
     categoria = "Outros"
     unidade = ""
     resumo = ""
     calculo = ""
     try:
+        # Papel Higiênico: aceita "4 rolos 40m", "4 rolos 40 12.50", etc
         if "Papel Higiênico" in produto:
             rolos = float(detalhes_split[0])
-            metros = float(detalhes_split[2]) if len(detalhes_split) > 2 else float(detalhes_split[1])
+            metros = None
+            for part in detalhes_split[1:]:
+                if "m" in part:
+                    metros = float(part.replace("m", ""))
+                elif is_float(part):
+                    metros = float(part)
             categoria = "Limpeza"
             unidade = "metros"
             preco_por_metro = preco / metros if metros else 0
@@ -145,22 +176,36 @@ async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resumo = f"{rolos} rolos / {metros}m - R${preco:.2f} (R${preco_por_metro:.2f}/m, R${preco_por_rolo:.2f}/rolo)"
             calculo = f"Preço por metro: R${preco_por_metro:.2f}\nPreço por rolo: R${preco_por_rolo:.2f}"
         elif any(p in produto for p in ["Queijo", "Presunto", "Mussarela", "Peito De Peru"]):
-            peso = float(detalhes_split[0])
+            peso = float(detalhes_split[0].replace("kg", "")) if "kg" in detalhes_split[0] else float(detalhes_split[0])
             categoria = "Frios"
             unidade = "kg"
             preco_por_kg = preco / peso if peso else 0
             resumo = f"{peso}kg - R${preco:.2f} (R${preco_por_kg:.2f}/kg)"
             calculo = f"Preço por kg: R${preco_por_kg:.2f}"
         else:
-            quantidade = float(detalhes_split[0])
-            unidade = detalhes_split[1] if len(detalhes_split) > 1 else ""
+            # Aceita "200g", "1 caixa", "2 litro", etc
+            quantidade = None
+            unidade = ""
+            if len(detalhes_split) == 2:
+                quantidade = float(detalhes_split[0])
+                unidade = detalhes_split[1]
+            elif detalhes_split:
+                # ex: "200g", "1caixa"
+                num = ''.join(filter(str.isdigit, detalhes_split[0]))
+                quantidade = float(num) if num else 1.0
+                unidade = ''.join(filter(str.isalpha, detalhes_split[0]))
+                if not unidade and len(detalhes_split) > 1:
+                    unidade = detalhes_split[1]
             resumo = f"{quantidade} {unidade} - R${preco:.2f}"
             calculo = ""
     except Exception as e:
         logging.error(f"Erro ao processar detalhes: {e}")
         await update.message.reply_text(
-            "⚠️ Formato de detalhes inválido. Exemplos: '0.5 kg', '4 rolos 40', '2 litro'. Tente novamente.",
-            reply_markup=cancel_keyboard()
+            "⚠️ Formato de detalhes inválido. Exemplos:\n"
+            "• Frios: `0.5 kg 25.00`\n"
+            "• Papel Higiênico: `4 rolos 40m 12.50`\n"
+            "• Outros: `200g 2.69`, `1 caixa 3.99`\n"
+            "Tente novamente.", reply_markup=cancel_keyboard()
         )
         return AWAIT_DETAILS
 
@@ -310,16 +355,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛒 *Ajuda do Bot de Compras*\n\n"
         "🔹 *Como usar:*\n"
         "• Digite o nome do produto direto ou use o menu\n"
-        "• Forneça detalhes e preço\n"
+        "• Forneça detalhes e preço juntos (ex: '200g 2.69', '0.5 kg 25.00') ou só os detalhes\n"
         "• O bot compara com o preço anterior\n"
         "• `➕ Adicionar Produto`: Cadastra novos itens\n"
         "• `❌ Excluir Produto`: Remove produtos cadastrados\n"
         "• `📋 Listar Produtos`: Mostra todos os itens\n"
         "• `🕒 Histórico`: Consulta histórico de preços\n\n"
         "📝 *Formatos de entrada:*\n"
-        "• Frios: `0.5 kg` (peso e unidade)\n"
-        "• Papel Higiênico: `4 rolos 40` (rolos e metros)\n"
-        "• Outros: `2 litro` (quantidade e unidade)"
+        "• Frios: `0.5 kg 25.00` (peso, unidade, preço)\n"
+        "• Papel Higiênico: `4 rolos 40m 12.50` (rolos, metragem, preço)\n"
+        "• Outros: `200g 2.69`, `1 caixa 3.99` (quantidade, unidade, preço)"
     )
     await update.message.reply_text(
         help_text,
@@ -344,8 +389,8 @@ def build_conv_handler():
                 MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
             ],
-            AWAIT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, ask_product_price)],
-            AWAIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_product)],
+            AWAIT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)],
+            AWAIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)],
             AWAIT_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
             CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)],
         },
