@@ -23,7 +23,7 @@ ABA_NOME = "Página1"
 CRED_FILE = "/etc/secrets/credentials.json"  # Ajuste conforme seu path no Render
 
 # === ESTADOS DO CONVERSATIONHANDLER ===
-MAIN_MENU, AWAIT_PRODUCT, AWAIT_DETAILS, AWAIT_PRICE, AWAIT_DELETION, CONFIRM_DELETION = range(6)
+MAIN_MENU, AWAIT_PRODUCT_NAME, AWAIT_DETAILS, AWAIT_PRICE, AWAIT_DELETION, CONFIRM_DELETION = range(6)
 
 # === LOGGING ===
 logging.basicConfig(
@@ -57,6 +57,7 @@ def cancel_keyboard():
     )
 
 # === HANDLERS ===
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🛒 *Bot de Compras Inteligente* 🛒\n\nEscolha uma opção ou digite direto o nome do produto:",
@@ -72,13 +73,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
-# Permite digitar o nome do produto direto
+# Handler para o botão Adicionar Produto
+async def ask_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Digite o nome do produto que deseja adicionar:", reply_markup=cancel_keyboard())
+    return AWAIT_PRODUCT_NAME
+
+# Handler para digitar o nome do produto (menu ou direto)
 async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
     text = update.message.text.strip().title()
     context.user_data['current_product'] = text
-    
+
     sheet = get_sheet()
     rows = sheet.get_all_values()[1:]  # Ignora cabeçalho
     historico = [row for row in rows if row[0] == text]
@@ -90,7 +96,7 @@ async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE
         "• Outros: `200g 2.69`, `1 caixa 3.99`\n"
         "Você pode informar quantidade/unidade e preço juntos, ou só os detalhes."
     )
-    # Se existe histórico, mostrar último preço e pergunta detalhes
+    # Se existe histórico, mostrar último preço e perguntar detalhes
     if historico:
         ultimo = historico[-1]
         preco_ultimo = float(ultimo[3]) if ultimo[3] else None
@@ -378,17 +384,19 @@ def build_conv_handler():
     return ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
+            MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_name),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
         ],
         states={
             MAIN_MENU: [
-                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), handle_product_name),
+                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_name),
                 MessageHandler(filters.Regex("^❌ Excluir Produto$"), delete_product),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
                 MessageHandler(filters.Regex("^🕒 Histórico$"), show_history),
                 MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
             ],
+            AWAIT_PRODUCT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)],
             AWAIT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)],
             AWAIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)],
             AWAIT_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
