@@ -3,7 +3,7 @@ import logging
 import gspread
 from flask import Flask, request
 from datetime import datetime
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton  # ✅ Importação correta
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     ContextTypes, ConversationHandler, filters
