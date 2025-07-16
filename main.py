@@ -1,18 +1,23 @@
 import os
 import logging
 import gspread
-from flask import Flask, request
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton  # ✅ Importação correta
+from threading import Thread
+from flask import Flask, request
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    ContextTypes, ConversationHandler, filters
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    ConversationHandler,
+    filters
 )
 from oauth2client.service_account import ServiceAccountCredentials
+import asyncio
 
 # === CONFIGURAÇÕES ===
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-PORT = int(os.environ.get("PORT", 10000))
 SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
 ABA_NOME = "Página1"
 
@@ -21,31 +26,13 @@ logging.basicConfig(level=logging.INFO)
 # === GOOGLE SHEETS ===
 def get_sheet():
     scope = [
-        "https://spreadsheets.google.com/feeds ",
-        "https://www.googleapis.com/auth/spreadsheets ",
-        "https://www.googleapis.com/auth/drive "
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
     ]
     creds = ServiceAccountCredentials.from_json_keyfile_name("/etc/secrets/credentials.json", scope)
     client = gspread.authorize(creds)
-    sheet = client.open_by_key(SPREADSHEET_ID).worksheet(ABA_NOME)
-    return sheet
-
-# === FLASK ===
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "🛒 Bot de Compras está no ar!", 200
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(), application.bot)
-    asyncio.run(application.process_update(update))
-    return "OK", 200
-
-@app.route("/healthz")
-def healthz():
-    return "OK", 200
+    return client.open_by_key(SPREADSHEET_ID).worksheet(ABA_NOME)
 
 # === TECLADOS ===
 def main_menu_keyboard():
@@ -127,7 +114,7 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MAIN_MENU
 
         texto = "📋 *Lista de Produtos:*\n\n"
-        for linha in dados[-10:]:  # últimos 10 registros
+        for linha in dados[-10:]:
             texto += f"🔹 *{linha['Produto']}* — R${linha['Preço']} ({linha['Unidade']})\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
@@ -139,7 +126,7 @@ async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         sheet = get_sheet()
         dados = sheet.get_all_values()
-        nomes = list({row[0] for row in dados[1:] if row[0]})  # Produto
+        nomes = list({row[0] for row in dados[1:] if row[0]})
         if not nomes:
             await update.message.reply_text("❌ Lista vazia.")
             return MAIN_MENU
@@ -170,7 +157,7 @@ async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet = get_sheet()
         valores = sheet.get_all_values()
 
-        for idx, row in enumerate(valores[1:], start=2):  # pula cabeçalho
+        for idx, row in enumerate(valores[1:], start=2):
             if row[0].lower() == produto.lower():
                 sheet.delete_row(idx)
                 await update.message.reply_text(f"🗑️ *{produto}* excluído.", parse_mode="Markdown", reply_markup=main_menu_keyboard())
@@ -182,8 +169,18 @@ async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Erro ao tentar excluir.")
     return MAIN_MENU
 
-# === INICIALIZAÇÃO DO BOT ===
-async def main():
+# === FLASK + WEBHOOK ===
+app = Flask(__name__)
+application = None
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    asyncio.run_coroutine_threadsafe(application.process_update(update), application._loop)
+    return "OK", 200
+
+# === MAIN ===
+async def start_bot():
     global application
 
     application = Application.builder().token(TOKEN).build()
@@ -206,14 +203,17 @@ async def main():
     )
 
     application.add_handler(conv_handler)
+    await application.initialize()
+    await application.bot.set_webhook(url=f"{os.environ['RENDER_EXTERNAL_URL']}/webhook")
+    await application.start()
 
-    # Configura webhook no Telegram
-    webhook_url = os.environ.get("RENDER_EXTERNAL_URL", "https://bot-mercado.onrender.com ") + "/webhook"
-    await application.bot.set_webhook(url=webhook_url)
+    while True:
+        await asyncio.sleep(3600)
 
-    # Inicia Flask
-    app.run(host="0.0.0.0", port=PORT)
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    logging.info("Iniciando bot com webhook via Flask")
+    Thread(target=run_flask).start()
+    asyncio.run(start_bot())
