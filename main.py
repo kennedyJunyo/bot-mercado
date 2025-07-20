@@ -1,17 +1,16 @@
 import os
+import json
 import logging
+import asyncio
 from datetime import datetime
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 from flask import Flask, request
-from telegram import (
-    Bot, Update,
-    ReplyKeyboardMarkup, KeyboardButton
-)
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
-    Dispatcher,
+    Application,
     CommandHandler,
     MessageHandler,
     ConversationHandler,
@@ -19,47 +18,46 @@ from telegram.ext import (
     filters
 )
 
-# === CONFIGURAÇÕES (via Env Vars / Render Secrets) ===
-TOKEN           = os.environ["TELEGRAM_BOT_TOKEN"]
-SPREADSHEET_ID  = os.environ["SPREADSHEET_ID"]
-WEBHOOK_URL     = os.environ["WEBHOOK_URL"]      # ex: https://seu-app.onrender.com
-PORT            = int(os.environ.get("PORT", 5000))
-CRED_FILE       = os.environ.get("CRED_FILE", "credentials.json")
+# === VARIÁVEIS DE AMBIENTE ===
+TOKEN                = os.environ["TELEGRAM_BOT_TOKEN"]
+SPREADSHEET_ID       = os.environ["SPREADSHEET_ID"]
+WEBHOOK_URL          = os.environ["WEBHOOK_URL"]    # ex: https://seu-app.onrender.com
+PORT                 = int(os.environ.get("PORT", 5000))
+GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
 
-# === PLANILHAS e ABAS ===
-ABA_PRODUTOS    = "Página1"
-ABA_SEMANA      = "ComprasSemana"
+# === NOMES DAS ABAS NO SHEET ===
+ABA_PRODUTOS = "Página1"
+ABA_SEMANA   = "ComprasSemana"
 
-# === ESTADOS ===
+# === ESTADOS DE CONVERSAÇÃO ===
 (
     MAIN_MENU,
     AWAIT_PRODUCT_NAME,
     AWAIT_CONFIRM_UPDATE,
     AWAIT_DETAILS,
     AWAIT_PRICE,
-    AWAIT_DELETION,
-    CONFIRM_DELETION,
     AWAIT_WEEKLY_MENU,
     AWAIT_WEEKLY_ADD,
     AWAIT_CONFIRM_CLEAR_WEEKLY
-) = range(10)
+) = range(8)
 
-# === LOGGING ===
+# === LOG ===
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# === UTILITÁRIOS GOOGLE SHEETS ===
-def get_sheet(sheet_name: str):
+# === UTILITÁRIO PARA ABRIR UMA ABA ===
+def get_sheet(worksheet_name: str):
+    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CRED_FILE, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    return client.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
+    return client.open_by_key(SPREADSHEET_ID).worksheet(worksheet_name)
 
 # === TECLADOS ===
 def main_menu_keyboard():
@@ -70,14 +68,10 @@ def main_menu_keyboard():
     ], resize_keyboard=True)
 
 def yes_no_keyboard():
-    return ReplyKeyboardMarkup([
-        ["Sim", "Não"]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["Sim", "Não"]], resize_keyboard=True)
 
 def cancel_keyboard():
-    return ReplyKeyboardMarkup([
-        ["❌ Cancelar"]
-    ], resize_keyboard=True)
+    return ReplyKeyboardMarkup([["❌ Cancelar"]], resize_keyboard=True)
 
 def weekly_menu_keyboard():
     return ReplyKeyboardMarkup([
@@ -95,7 +89,7 @@ def is_float(text: str) -> bool:
     except:
         return False
 
-# === HANDLERS PRINCIPAIS ===
+# === HANDLERS – fluxo principal de preços ===
 def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update.message.reply_text(
         "🛒 *Bot de Compras Inteligente*\n\n"
@@ -112,7 +106,6 @@ def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
-# 1) Fluxo de cadastro / atualização de preços
 def ask_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update.message.reply_text(
         "Digite o nome do produto:",
@@ -128,12 +121,10 @@ def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nome = text.title()
     context.user_data["current_product"] = nome
     ws = get_sheet(ABA_PRODUTOS)
-    rows = ws.get_all_values()[1:]
-    historico = [r for r in rows if r[0] == nome]
+    historico = [r for r in ws.get_all_values()[1:] if r[0] == nome]
 
     if historico:
-        ultimo = historico[-1]
-        preco_antigo = float(ultimo[3]) if is_float(ultimo[3]) else 0.0
+        preco_antigo = float(historico[-1][3] or 0)
         update.message.reply_text(
             f"📊 Último preço de *{nome}*: R${preco_antigo:.2f}\n\n"
             "Deseja atualizar o preço?",
@@ -142,7 +133,6 @@ def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return AWAIT_CONFIRM_UPDATE
 
-    # novo produto
     formatos = (
         "📝 Formatos:\n"
         "• Frios: `0.5 kg 25.00`\n"
@@ -166,7 +156,7 @@ def confirm_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return AWAIT_PRICE
     if escolha == "não":
         return cancel(update, context)
-    # qualquer outro texto: trata como novo nome de produto
+    # se não for sim/não, trata como novo produto
     return handle_product_name(update, context)
 
 def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -176,11 +166,9 @@ def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     partes = texto.replace(",", ".").split()
     if len(partes) >= 2 and is_float(partes[-1]):
-        # detalhes + preço juntos
         context.user_data["detalhes"] = " ".join(partes[:-1])
         return handle_price(update, context)
 
-    # somente detalhes
     context.user_data["detalhes"] = texto
     update.message.reply_text(
         "Digite o preço do produto (ex: 12.30):",
@@ -189,7 +177,7 @@ def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return AWAIT_PRICE
 
 def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.strip().replace(",", ".")
+    texto = update.message.text.replace(",", ".").strip()
     if texto.lower() == "❌ cancelar":
         return cancel(update, context)
     if not is_float(texto):
@@ -203,11 +191,11 @@ def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     detalhes = context.user_data.get("detalhes", "")
     preco    = float(texto)
     ws       = get_sheet(ABA_PRODUTOS)
-    rows     = ws.get_all_values()[1:]
-    historico = [r for r in rows if r[0] == produto]
+    historico = [r for r in ws.get_all_values()[1:] if r[0] == produto]
+
     comparacao = ""
     if historico:
-        preco_antigo = float(historico[-1][3])
+        preco_antigo = float(historico[-1][3] or 0)
         comparacao = (
             "🟢 Mais barato que R${:.2f}".format(preco_antigo)
             if preco < preco_antigo else
@@ -216,14 +204,12 @@ def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🟡 Mesmo preço de R${:.2f}".format(preco_antigo)
         )
 
-    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     resumo = f"R${preco:.2f}"
+    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     ws.append_row([produto, detalhes, preco, resumo, timestamp])
 
     update.message.reply_text(
-        "✅ Produto *{}* salvo!\n{}\n{}".format(
-            produto, resumo, comparacao
-        ),
+        f"✅ Produto *{produto}* salvo!\n{resumo}\n{comparacao}",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard()
     )
@@ -240,11 +226,10 @@ def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
-# 2) Fluxo de Compras Semanais
+# === HANDLERS – Compras Semanais ===
 def compras_semanais_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update.message.reply_text(
-        "🛒 *Compras da Semana*\n\n"
-        "Escolha uma opção:",
+        "🛒 *Compras da Semana*\n\nEscolha uma opção:",
         parse_mode="Markdown",
         reply_markup=weekly_menu_keyboard()
     )
@@ -268,7 +253,7 @@ def weekly_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=weekly_menu_keyboard()
             )
         else:
-            lista = "\n".join(f"• {row[0]}" for row in items)
+            lista = "\n".join(f"• {r[0]}" for r in items)
             update.message.reply_text(
                 f"📋 *Lista da Semana:*\n{lista}",
                 parse_mode="Markdown",
@@ -286,7 +271,6 @@ def weekly_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "↩️ Voltar":
         return cancel(update, context)
 
-    # qualquer outro texto, volta ao menu
     return compras_semanais_menu(update, context)
 
 def weekly_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,8 +279,7 @@ def weekly_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return compras_semanais_menu(update, context)
 
     ws = get_sheet(ABA_SEMANA)
-    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    ws.append_row([text, timestamp])
+    ws.append_row([text, datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
     update.message.reply_text(
         f"✅ *{text}* adicionado à lista semanal.",
         parse_mode="Markdown",
@@ -318,7 +301,7 @@ def weekly_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return AWAIT_WEEKLY_MENU
     if escolha == "não":
         return compras_semanais_menu(update, context)
-    # inválido: volta ao menu de confirmação
+
     update.message.reply_text(
         "Responda apenas Sim ou Não.",
         reply_markup=yes_no_keyboard()
@@ -333,50 +316,38 @@ conv = ConversationHandler(
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_name),
             MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
             MessageHandler(filters.Regex("^🛒 Compras Semanais$"), compras_semanais_menu),
-            # ... você pode adicionar Listar, Excluir, Histórico
         ],
-        AWAIT_PRODUCT_NAME: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
-        ],
-        AWAIT_CONFIRM_UPDATE: [
+        AWAIT_PRODUCT_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)],
+        AWAIT_CONFIRM_UPDATE:  [
             MessageHandler(filters.Regex("^(Sim|Não)$"), confirm_update),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
         ],
-        AWAIT_DETAILS: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)
-        ],
-        AWAIT_PRICE: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)
-        ],
-        # estados de Compras Semanais
-        AWAIT_WEEKLY_MENU: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_menu_handler)
-        ],
-        AWAIT_WEEKLY_ADD: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_add_product)
-        ],
+        AWAIT_DETAILS:         [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)],
+        AWAIT_PRICE:           [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)],
+        AWAIT_WEEKLY_MENU:     [MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_menu_handler)],
+        AWAIT_WEEKLY_ADD:      [MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_add_product)],
         AWAIT_CONFIRM_CLEAR_WEEKLY: [
             MessageHandler(filters.Regex("^(Sim|Não)$"), weekly_clear_confirm),
             MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_menu_handler)
         ],
-        # … demais estados (exclusão de produto, histórico etc.)
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     allow_reentry=True
 )
 
-# === INICIALIZAÇÃO ===
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot, None, workers=4)
-dispatcher.add_handler(conv)
+# === INICIALIZAÇÃO DO BOT & FLASK ===
+application = Application.builder().token(TOKEN).build()
+application.add_handler(conv)
 
 app = Flask(__name__)
+loop = asyncio.get_event_loop()
 
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
-    dispatcher.process_update(update)
+    data   = request.get_json(force=True)
+    update = Update.de_json(data, application.bot)
+    # dispara o processamento async
+    loop.create_task(application.process_update(update))
     return "OK"
 
 @app.route("/healthz", methods=["GET"])
@@ -384,5 +355,7 @@ def healthz():
     return "OK"
 
 if __name__ == "__main__":
-    bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
+    # registra o webhook no Telegram
+    application.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
+    # inicia Flask
     app.run(host="0.0.0.0", port=PORT)
