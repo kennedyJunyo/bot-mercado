@@ -1,14 +1,11 @@
 import os
-import json
 import logging
 import asyncio
-from datetime import datetime
-
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-
+from threading import Thread
+from datetime import datetime
 from flask import Flask, request
-from telegram import Update, KeyboardButton, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -17,345 +14,455 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+from oauth2client.service_account import ServiceAccountCredentials
 
-# === VARIÁVEIS DE AMBIENTE ===
-TOKEN                = os.environ["TELEGRAM_BOT_TOKEN"]
-SPREADSHEET_ID       = os.environ["SPREADSHEET_ID"]
-WEBHOOK_URL          = os.environ["WEBHOOK_URL"]    # ex: https://seu-app.onrender.com
-PORT                 = int(os.environ.get("PORT", 5000))
-GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
+# === CONFIGURAÇÕES ===
+TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
+ABA_NOME = "Página1"
+CRED_FILE = "/etc/secrets/credentials.json"  # Ajuste conforme seu path no Render
 
-# === NOMES DAS ABAS NO SHEET ===
-ABA_PRODUTOS = "Página1"
-ABA_SEMANA   = "ComprasSemana"
+# === ESTADOS DO CONVERSATIONHANDLER ===
+MAIN_MENU, AWAIT_PRODUCT_NAME, AWAIT_DETAILS, AWAIT_PRICE, AWAIT_DELETION, CONFIRM_DELETION = range(6)
 
-# === ESTADOS DE CONVERSAÇÃO ===
-(
-    MAIN_MENU,
-    AWAIT_PRODUCT_NAME,
-    AWAIT_CONFIRM_UPDATE,
-    AWAIT_DETAILS,
-    AWAIT_PRICE,
-    AWAIT_WEEKLY_MENU,
-    AWAIT_WEEKLY_ADD,
-    AWAIT_CONFIRM_CLEAR_WEEKLY
-) = range(8)
-
-# === LOG ===
+# === LOGGING ===
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# === UTILITÁRIO PARA ABRIR UMA ABA ===
-def get_sheet(worksheet_name: str):
-    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+# === GOOGLE SHEETS ===
+def get_sheet():
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_name(CRED_FILE, scope)
     client = gspread.authorize(creds)
-    return client.open_by_key(SPREADSHEET_ID).worksheet(worksheet_name)
+    return client.open_by_key(SPREADSHEET_ID).worksheet(ABA_NOME)
 
 # === TECLADOS ===
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
-        ["➕ Adicionar Produto", "❌ Excluir Produto"],
-        ["📋 Listar Produtos", "⏱️ Histórico"],
-        ["🛒 Compras Semanais", "ℹ️ Ajuda"]
+        [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("❌ Excluir Produto")],
+        [KeyboardButton("📋 Listar Produtos"), KeyboardButton("🕒 Histórico")],
+        [KeyboardButton("ℹ️ Ajuda")]
     ], resize_keyboard=True)
-
-def yes_no_keyboard():
-    return ReplyKeyboardMarkup([["Sim", "Não"]], resize_keyboard=True)
 
 def cancel_keyboard():
-    return ReplyKeyboardMarkup([["❌ Cancelar"]], resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton("❌ Cancelar")]],
+        resize_keyboard=True
+    )
 
-def weekly_menu_keyboard():
-    return ReplyKeyboardMarkup([
-        ["📥 Adicionar produtos"],
-        ["📋 Listar produtos da semana"],
-        ["❌ Limpar lista semanal"],
-        ["↩️ Voltar"]
-    ], resize_keyboard=True)
+# === HANDLERS ===
 
-# === HELPERS ===
-def is_float(text: str) -> bool:
-    try:
-        float(text.replace(",", "."))
-        return True
-    except:
-        return False
-
-# === HANDLERS – fluxo principal de preços ===
-def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.message.reply_text(
-        "🛒 *Bot de Compras Inteligente*\n\n"
-        "Escolha uma opção ou digite o nome do produto:",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🛒 *Bot de Compras Inteligente* 🛒\n\nEscolha uma opção ou digite direto o nome do produto:",
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
     )
     return MAIN_MENU
 
-def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.message.reply_text(
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "❌ Operação cancelada.",
         reply_markup=main_menu_keyboard()
     )
     return MAIN_MENU
 
-def ask_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.message.reply_text(
-        "Digite o nome do produto:",
-        reply_markup=cancel_keyboard()
-    )
+# Handler para o botão Adicionar Produto
+async def ask_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Digite o nome do produto que deseja adicionar:", reply_markup=cancel_keyboard())
     return AWAIT_PRODUCT_NAME
 
-def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.lower() == "❌ cancelar":
-        return cancel(update, context)
+# Handler para digitar o nome do produto (menu ou direto)
+async def handle_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    text = update.message.text.strip().title()
+    context.user_data['current_product'] = text
 
-    nome = text.title()
-    context.user_data["current_product"] = nome
-    ws = get_sheet(ABA_PRODUTOS)
-    historico = [r for r in ws.get_all_values()[1:] if r[0] == nome]
+    sheet = get_sheet()
+    rows = sheet.get_all_values()[1:]  # Ignora cabeçalho
+    historico = [row for row in rows if row[0] == text]
 
-    if historico:
-        preco_antigo = float(historico[-1][3] or 0)
-        update.message.reply_text(
-            f"📊 Último preço de *{nome}*: R${preco_antigo:.2f}\n\n"
-            "Deseja atualizar o preço?",
-            parse_mode="Markdown",
-            reply_markup=yes_no_keyboard()
-        )
-        return AWAIT_CONFIRM_UPDATE
-
-    formatos = (
-        "📝 Formatos:\n"
+    format_message = (
+        "📝 Formatos de entrada:\n"
         "• Frios: `0.5 kg 25.00`\n"
         "• Papel Higiênico: `4 rolos 40m 12.50`\n"
-        "• Outros: `200g 2.69`, `1 caixa 3.99`"
+        "• Outros: `200g 2.69`, `1 caixa 3.99`\n"
+        "Você pode informar quantidade/unidade e preço juntos, ou só os detalhes."
     )
-    update.message.reply_text(
-        f"📦 Novo produto: *{nome}*\n\n{formatos}",
-        parse_mode="Markdown",
-        reply_markup=cancel_keyboard()
-    )
+    # Se existe histórico, mostrar último preço e perguntar detalhes
+    if historico:
+        ultimo = historico[-1]
+        preco_ultimo = float(ultimo[3]) if ultimo[3] else None
+        await update.message.reply_text(
+            f"📊 Último preço de {text}: R${preco_ultimo:.2f}\n\n{format_message}",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            f"📦 Novo produto: {text}\n\n{format_message}",
+            parse_mode="Markdown",
+            reply_markup=cancel_keyboard()
+        )
     return AWAIT_DETAILS
 
-def confirm_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    escolha = update.message.text.strip().lower()
-    if escolha == "sim":
-        update.message.reply_text(
-            "Digite o novo preço (ex: 8.50):",
-            reply_markup=cancel_keyboard()
-        )
-        return AWAIT_PRICE
-    if escolha == "não":
-        return cancel(update, context)
-    # se não for sim/não, trata como novo produto
-    return handle_product_name(update, context)
+async def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    produto = context.user_data["current_product"]
+    detalhes_raw = update.message.text.strip()
+    detalhes_split = detalhes_raw.replace(",", ".").split()
+    preco = None
 
-def handle_details_and_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.strip()
-    if texto.lower() == "❌ cancelar":
-        return cancel(update, context)
+    # Tenta identificar se preço foi informado na mesma mensagem (última parte é float)
+    try:
+        if len(detalhes_split) >= 2 and is_float(detalhes_split[-1]):
+            preco = float(detalhes_split[-1])
+            detalhes = " ".join(detalhes_split[:-1])
+        else:
+            detalhes = detalhes_raw
+    except Exception:
+        detalhes = detalhes_raw
 
-    partes = texto.replace(",", ".").split()
-    if len(partes) >= 2 and is_float(partes[-1]):
-        context.user_data["detalhes"] = " ".join(partes[:-1])
-        return handle_price(update, context)
-
-    context.user_data["detalhes"] = texto
-    update.message.reply_text(
-        "Digite o preço do produto (ex: 12.30):",
-        reply_markup=cancel_keyboard()
-    )
-    return AWAIT_PRICE
-
-def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.replace(",", ".").strip()
-    if texto.lower() == "❌ cancelar":
-        return cancel(update, context)
-    if not is_float(texto):
-        update.message.reply_text(
-            "⚠️ Preço inválido. Exemplo: 8.50",
-            reply_markup=cancel_keyboard()
-        )
+    if preco is not None:
+        # Salva direto
+        return await save_product_final(update, context, produto, detalhes, preco)
+    else:
+        context.user_data["detalhes"] = detalhes
+        await update.message.reply_text("Digite o preço do produto (ex: 8.50):", reply_markup=cancel_keyboard())
         return AWAIT_PRICE
 
-    produto  = context.user_data["current_product"]
+def is_float(text):
+    try:
+        float(text)
+        return True
+    except Exception:
+        return False
+
+async def handle_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    produto = context.user_data["current_product"]
     detalhes = context.user_data.get("detalhes", "")
-    preco    = float(texto)
-    ws       = get_sheet(ABA_PRODUTOS)
-    historico = [r for r in ws.get_all_values()[1:] if r[0] == produto]
+    preco_str = update.message.text.replace(",", ".")
+    try:
+        preco = float(preco_str)
+    except ValueError:
+        await update.message.reply_text("⚠️ Preço inválido, tente novamente. Exemplo: 8.50", reply_markup=cancel_keyboard())
+        return AWAIT_PRICE
+    return await save_product_final(update, context, produto, detalhes, preco)
 
-    comparacao = ""
+async def save_product_final(update, context, produto, detalhes, preco):
+    detalhes_split = detalhes.split()
+    categoria = "Outros"
+    unidade = ""
+    resumo = ""
+    calculo = ""
+    try:
+        # Papel Higiênico: aceita "4 rolos 40m", "4 rolos 40 12.50", etc
+        if "Papel Higiênico" in produto:
+            rolos = float(detalhes_split[0])
+            metros = None
+            for part in detalhes_split[1:]:
+                if "m" in part:
+                    metros = float(part.replace("m", ""))
+                elif is_float(part):
+                    metros = float(part)
+            categoria = "Limpeza"
+            unidade = "metros"
+            preco_por_metro = preco / metros if metros else 0
+            preco_por_rolo = preco / rolos if rolos else 0
+            resumo = f"{rolos} rolos / {metros}m - R${preco:.2f} (R${preco_por_metro:.2f}/m, R${preco_por_rolo:.2f}/rolo)"
+            calculo = f"Preço por metro: R${preco_por_metro:.2f}\nPreço por rolo: R${preco_por_rolo:.2f}"
+        elif any(p in produto for p in ["Queijo", "Presunto", "Mussarela", "Peito De Peru"]):
+            peso = float(detalhes_split[0].replace("kg", "")) if "kg" in detalhes_split[0] else float(detalhes_split[0])
+            categoria = "Frios"
+            unidade = "kg"
+            preco_por_kg = preco / peso if peso else 0
+            resumo = f"{peso}kg - R${preco:.2f} (R${preco_por_kg:.2f}/kg)"
+            calculo = f"Preço por kg: R${preco_por_kg:.2f}"
+        else:
+            # Aceita "200g", "1 caixa", "2 litro", etc
+            quantidade = None
+            unidade = ""
+            if len(detalhes_split) == 2:
+                quantidade = float(detalhes_split[0])
+                unidade = detalhes_split[1]
+            elif detalhes_split:
+                # ex: "200g", "1caixa"
+                num = ''.join(filter(str.isdigit, detalhes_split[0]))
+                quantidade = float(num) if num else 1.0
+                unidade = ''.join(filter(str.isalpha, detalhes_split[0]))
+                if not unidade and len(detalhes_split) > 1:
+                    unidade = detalhes_split[1]
+            resumo = f"{quantidade} {unidade} - R${preco:.2f}"
+            calculo = ""
+    except Exception as e:
+        logging.error(f"Erro ao processar detalhes: {e}")
+        await update.message.reply_text(
+            "⚠️ Formato de detalhes inválido. Exemplos:\n"
+            "• Frios: `0.5 kg 25.00`\n"
+            "• Papel Higiênico: `4 rolos 40m 12.50`\n"
+            "• Outros: `200g 2.69`, `1 caixa 3.99`\n"
+            "Tente novamente.", reply_markup=cancel_keyboard()
+        )
+        return AWAIT_DETAILS
+
+    # Busca histórico do produto para comparar
+    sheet = get_sheet()
+    rows = sheet.get_all_values()[1:]
+    historico = [row for row in rows if row[0] == produto]
+    mensagem_comparacao = ""
     if historico:
-        preco_antigo = float(historico[-1][3] or 0)
-        comparacao = (
-            "🟢 Mais barato que R${:.2f}".format(preco_antigo)
-            if preco < preco_antigo else
-            "🔴 Mais caro que R${:.2f}".format(preco_antigo)
-            if preco > preco_antigo else
-            "🟡 Mesmo preço de R${:.2f}".format(preco_antigo)
+        ultimo = historico[-1]
+        preco_ultimo = float(ultimo[3]) if ultimo[3] else None
+        if preco_ultimo:
+            if preco < preco_ultimo:
+                mensagem_comparacao = f"🟢 Mais barato que a última compra (R${preco_ultimo:.2f})!"
+            elif preco > preco_ultimo:
+                mensagem_comparacao = f"🔴 Mais caro que a última compra (R${preco_ultimo:.2f})!"
+            else:
+                mensagem_comparacao = f"🟡 Mesmo preço que a última compra (R${preco_ultimo:.2f})!"
+
+    # Salvar na planilha Google Sheets
+    try:
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        sheet.append_row([produto, categoria, detalhes, preco, resumo, timestamp])
+        await update.message.reply_text(
+            f"✅ Produto '{produto}' salvo: {resumo}\n{calculo}\n{mensagem_comparacao}",
+            reply_markup=main_menu_keyboard()
         )
-
-    resumo = f"R${preco:.2f}"
-    timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    ws.append_row([produto, detalhes, preco, resumo, timestamp])
-
-    update.message.reply_text(
-        f"✅ Produto *{produto}* salvo!\n{resumo}\n{comparacao}",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard()
-    )
+    except Exception as e:
+        logging.error(f"Erro ao salvar produto: {e}")
+        await update.message.reply_text("❌ Erro ao salvar produto. Tente novamente mais tarde.", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
-def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.message.reply_text(
-        "ℹ️ *Ajuda do Bot*\n\n"
-        "• Digite o nome do produto ou use o menu\n"
-        "• Formatos: `200g 2.69`, `0.5 kg 25.00`, etc\n"
-        "• O bot compara com o último preço",
-        parse_mode="Markdown",
-        reply_markup=main_menu_keyboard()
-    )
-    return MAIN_MENU
-
-# === HANDLERS – Compras Semanais ===
-def compras_semanais_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    update.message.reply_text(
-        "🛒 *Compras da Semana*\n\nEscolha uma opção:",
-        parse_mode="Markdown",
-        reply_markup=weekly_menu_keyboard()
-    )
-    return AWAIT_WEEKLY_MENU
-
-def weekly_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text == "📥 Adicionar produtos":
-        update.message.reply_text(
-            "Digite o nome do produto para a lista semanal:",
-            reply_markup=cancel_keyboard()
+async def delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sheet = get_sheet()
+    rows = sheet.get_all_values()[1:]
+    produtos = set([row[0] for row in rows])
+    if not produtos:
+        await update.message.reply_text(
+            "📭 Nenhum produto cadastrado para excluir.",
+            reply_markup=main_menu_keyboard()
         )
-        return AWAIT_WEEKLY_ADD
+        return MAIN_MENU
+    
+    buttons = [[KeyboardButton(name)] for name in produtos]
+    buttons.append([KeyboardButton("❌ Cancelar")])
+    await update.message.reply_text(
+        "🗑️ Selecione o produto a excluir:",
+        reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    )
+    return AWAIT_DELETION
 
-    if text == "📋 Listar produtos da semana":
-        ws = get_sheet(ABA_SEMANA)
-        items = ws.get_all_values()[1:]
-        if not items:
-            update.message.reply_text(
-                "📭 Lista semanal está vazia.",
-                reply_markup=weekly_menu_keyboard()
+async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+    produto = update.message.text
+    sheet = get_sheet()
+    rows = sheet.get_all_values()
+    idx_to_delete = None
+    for idx, row in enumerate(rows):
+        if row[0] == produto:
+            idx_to_delete = idx + 1  # 1-based index for gspread
+    if idx_to_delete:
+        context.user_data['product_to_delete'] = produto
+        await update.message.reply_text(
+            f"⚠️ Confirmar exclusão de *{produto}*\nDigite 'SIM' para confirmar ou 'NÃO' para cancelar",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("✅ SIM"), KeyboardButton("❌ NÃO")]
+            ], resize_keyboard=True)
+        )
+        return CONFIRM_DELETION
+    else:
+        await update.message.reply_text(
+            f"ℹ️ Produto '{produto}' não encontrado.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+
+async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.upper()
+    if text == "✅ SIM" or text == "SIM":
+        produto = context.user_data['product_to_delete']
+        sheet = get_sheet()
+        rows = sheet.get_all_values()
+        idx_to_delete = None
+        for idx, row in enumerate(rows):
+            if row[0] == produto:
+                idx_to_delete = idx + 1
+        if idx_to_delete:
+            sheet.delete_rows(idx_to_delete)
+            await update.message.reply_text(
+                f"🗑️ *{produto}* foi excluído permanentemente.",
+                reply_markup=main_menu_keyboard(),
+                parse_mode="Markdown"
             )
         else:
-            lista = "\n".join(f"• {r[0]}" for r in items)
-            update.message.reply_text(
-                f"📋 *Lista da Semana:*\n{lista}",
-                parse_mode="Markdown",
-                reply_markup=weekly_menu_keyboard()
+            await update.message.reply_text(
+                f"ℹ️ Produto '{produto}' não encontrado.",
+                reply_markup=main_menu_keyboard()
             )
-        return AWAIT_WEEKLY_MENU
-
-    if text == "❌ Limpar lista semanal":
-        update.message.reply_text(
-            "Tem certeza que deseja limpar a lista semanal?",
-            reply_markup=yes_no_keyboard()
+    else:
+        await update.message.reply_text(
+            "❌ Exclusão cancelada.",
+            reply_markup=main_menu_keyboard()
         )
-        return AWAIT_CONFIRM_CLEAR_WEEKLY
+    return MAIN_MENU
 
-    if text == "↩️ Voltar":
-        return cancel(update, context)
-
-    return compras_semanais_menu(update, context)
-
-def weekly_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.lower() == "❌ cancelar":
-        return compras_semanais_menu(update, context)
-
-    ws = get_sheet(ABA_SEMANA)
-    ws.append_row([text, datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
-    update.message.reply_text(
-        f"✅ *{text}* adicionado à lista semanal.",
-        parse_mode="Markdown",
-        reply_markup=weekly_menu_keyboard()
-    )
-    return AWAIT_WEEKLY_MENU
-
-def weekly_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    escolha = update.message.text.strip().lower()
-    if escolha == "sim":
-        ws = get_sheet(ABA_SEMANA)
-        header = ws.row_values(1)
-        ws.clear()
-        ws.append_row(header)
-        update.message.reply_text(
-            "🗑️ Lista semanal limpa.",
-            reply_markup=weekly_menu_keyboard()
+async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sheet = get_sheet()
+    rows = sheet.get_all_values()[1:]
+    if not rows:
+        await update.message.reply_text(
+            "📭 Nenhum produto cadastrado.",
+            reply_markup=main_menu_keyboard()
         )
-        return AWAIT_WEEKLY_MENU
-    if escolha == "não":
-        return compras_semanais_menu(update, context)
-
-    update.message.reply_text(
-        "Responda apenas Sim ou Não.",
-        reply_markup=yes_no_keyboard()
+        return MAIN_MENU
+    message = "📋 *Lista de Produtos*\n\n"
+    for row in rows:
+        message += f"🏷️ *{row[0]}*\n• {row[4]}\n\n"
+    await update.message.reply_text(
+        message,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
     )
-    return AWAIT_CONFIRM_CLEAR_WEEKLY
+    return MAIN_MENU
+
+async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sheet = get_sheet()
+    rows = sheet.get_all_values()[1:]
+    produtos = set([row[0] for row in rows])
+    if not produtos:
+        await update.message.reply_text(
+            "📭 Nenhum produto cadastrado.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+    buttons = [[KeyboardButton(name)] for name in produtos]
+    buttons.append([KeyboardButton("❌ Cancelar")])
+    await update.message.reply_text(
+        "🔍 Selecione o produto para ver o histórico:",
+        reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    )
+    return MAIN_MENU  # ou outro estado para escolha de histórico
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "🛒 *Ajuda do Bot de Compras*\n\n"
+        "🔹 *Como usar:*\n"
+        "• Digite o nome do produto direto ou use o menu\n"
+        "• Forneça detalhes e preço juntos (ex: '200g 2.69', '0.5 kg 25.00') ou só os detalhes\n"
+        "• O bot compara com o preço anterior\n"
+        "• `➕ Adicionar Produto`: Cadastra novos itens\n"
+        "• `❌ Excluir Produto`: Remove produtos cadastrados\n"
+        "• `📋 Listar Produtos`: Mostra todos os itens\n"
+        "• `🕒 Histórico`: Consulta histórico de preços\n\n"
+        "📝 *Formatos de entrada:*\n"
+        "• Frios: `0.5 kg 25.00` (peso, unidade, preço)\n"
+        "• Papel Higiênico: `4 rolos 40m 12.50` (rolos, metragem, preço)\n"
+        "• Outros: `200g 2.69`, `1 caixa 3.99` (quantidade, unidade, preço)"
+    )
+    await update.message.reply_text(
+        help_text,
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
 
 # === CONVERSATION HANDLER ===
-conv = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
-    states={
-        MAIN_MENU: [
+def build_conv_handler():
+    return ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start),
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_name),
-            MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
-            MessageHandler(filters.Regex("^🛒 Compras Semanais$"), compras_semanais_menu),
-        ],
-        AWAIT_PRODUCT_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)],
-        AWAIT_CONFIRM_UPDATE:  [
-            MessageHandler(filters.Regex("^(Sim|Não)$"), confirm_update),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
         ],
-        AWAIT_DETAILS:         [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)],
-        AWAIT_PRICE:           [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)],
-        AWAIT_WEEKLY_MENU:     [MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_menu_handler)],
-        AWAIT_WEEKLY_ADD:      [MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_add_product)],
-        AWAIT_CONFIRM_CLEAR_WEEKLY: [
-            MessageHandler(filters.Regex("^(Sim|Não)$"), weekly_clear_confirm),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, weekly_menu_handler)
-        ],
-    },
-    fallbacks=[CommandHandler("cancel", cancel)],
-    allow_reentry=True
-)
+        states={
+            MAIN_MENU: [
+                MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_name),
+                MessageHandler(filters.Regex("^❌ Excluir Produto$"), delete_product),
+                MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
+                MessageHandler(filters.Regex("^🕒 Histórico$"), show_history),
+                MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)
+            ],
+            AWAIT_PRODUCT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_name)],
+            AWAIT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_details_and_price)],
+            AWAIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_price)],
+            AWAIT_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
+            CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)],
+        },
+        fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)],
+    )
 
-# === INICIALIZAÇÃO DO BOT & FLASK ===
-application = Application.builder().token(TOKEN).build()
-application.add_handler(conv)
-
+# === FLASK + WEBHOOK SETUP ===
 app = Flask(__name__)
-loop = asyncio.get_event_loop()
+application = None
+loop = None  # Event loop global/shared
 
-@app.route(f"/{TOKEN}", methods=["POST"])
+@app.route("/webhook", methods=["POST"])
 def webhook():
-    data   = request.get_json(force=True)
-    update = Update.de_json(data, application.bot)
-    # dispara o processamento async
-    loop.create_task(application.process_update(update))
-    return "OK"
+    try:
+        if not application or not loop:
+            logging.error("Application ou event loop não inicializados!")
+            return "Loop não iniciado", 500
+        json_data = request.get_json(force=True)
+        update = Update.de_json(json_data, application.bot)
+        loop.call_soon_threadsafe(asyncio.create_task, application.process_update(update))
+        return "OK", 200
+    except Exception as e:
+        logging.error(f"Erro no webhook: {e}")
+        return "Erro", 500
 
-@app.route("/healthz", methods=["GET"])
-def healthz():
-    return "OK"
+@app.route("/")
+def home():
+    return "🤖 Bot de Lista de Compras está no ar!", 200
+
+@app.route("/healthz")
+def health_check():
+    return "OK", 200
+
+async def start_bot():
+    global application
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
+    application.add_handler(build_conv_handler())
+
+    await application.initialize()
+    webhook_url = f"{os.environ['RENDER_EXTERNAL_URL']}/webhook"
+    await application.bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    logging.info(f"Webhook configurado: {webhook_url}")
+
+    await application.start()
+    while True:
+        await asyncio.sleep(3600)
+
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
-    # registra o webhook no Telegram
-    application.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
-    # inicia Flask
-    app.run(host="0.0.0.0", port=PORT)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    Thread(target=run_flask).start()
+    try:
+        loop.run_until_complete(start_bot())
+    except KeyboardInterrupt:
+        logging.info("Bot encerrado.")
+    except Exception as e:
+        logging.error(f"Erro fatal: {e}")
+    finally:
+        loop.close()
