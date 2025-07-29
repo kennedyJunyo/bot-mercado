@@ -21,11 +21,11 @@ from oauth2client.service_account import ServiceAccountCredentials
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
 ABA_NOME = "Página1"
-CRED_FILE = "/etc/secrets/credentials.json"
+CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho está correto no Render
 
 # === ESTADOS DO CONVERSATIONHANDLER ===
-# Estados atualizados para refletir a nova funcionalidade de editar/excluir
-MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION = range(7)
+# Definindo os estados de forma clara e explícita
+MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT = range(8)
 
 # === LOGGING ===
 logging.basicConfig(
@@ -801,7 +801,7 @@ async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return MAIN_MENU
 
-# === FUNÇÃO DE PESQUISA (implementada conforme solicitado anteriormente) ===
+# === FUNÇÃO DE PESQUISA ===
 async def search_product_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Permite ao usuário digitar o nome de um produto para ver seu histórico."""
     await update.message.reply_text(
@@ -809,21 +809,77 @@ async def search_product_history(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=cancel_keyboard(),
         parse_mode="Markdown"
     )
-    return MAIN_MENU + 1 # Usando um estado temporário, mas vamos usar um estado específico
+    return SEARCH_PRODUCT_INPUT
 
-# Vamos definir um estado específico para isso
-# Adicione SEARCH_PRODUCT_HISTORY = 7 no topo, mas como já temos 7 estados, vamos usar um existente
-# Vamos redefinir os estados para incluir SEARCH_PRODUCT_HISTORY
+async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra os resultados da pesquisa de produto."""
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
 
-# === REDEFININDO ESTADOS PARA INCLUIR A PESQUISA ===
-# MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_HISTORY_INPUT = range(8)
+    search_term = update.message.text.strip().title()
 
-# Vamos simplificar e usar o próprio MAIN_MENU para o input inicial e criar um novo estado
-# Mas para manter o código mais limpo, vamos redefinir os estados no início do código.
+    try:
+        sheet = get_sheet()
+        rows = sheet.get_all_values()[1:] # Ignora cabeçalho
+    except Exception as e:
+        logging.error(f"Erro ao acessar a planilha para pesquisa: {e}")
+        await update.message.reply_text(
+            "❌ Erro ao acessar os produtos. Tente novamente mais tarde.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
 
-# Como o código já está muito longo, vou finalizar a implementação da pesquisa aqui de forma resumida.
-# A função `search_product_history` acima inicia o processo, mas precisaria de outra função para processar o input.
-# Para manter o código funcional e evitar o erro inicial, vou comentar a referência a essa função incompleta.
+    # Filtra produtos cujo nome começa com o termo pesquisado
+    matching_rows = [row for row in rows if row[0].lower().startswith(search_term.lower())]
+
+    if not matching_rows:
+        await update.message.reply_text(
+            f"📭 Nenhum produto encontrado começando com '*{search_term}*'.",
+            reply_markup=main_menu_keyboard(),
+             parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    message = f"🔍 Resultados para '*{search_term}*':\n\n"
+    produtos_agrupados = {}
+    for row in matching_rows:
+         nome = row[0]
+         if nome not in produtos_agrupados:
+             produtos_agrupados[nome] = []
+         produtos_agrupados[nome].append(row)
+
+    for nome, registros in produtos_agrupados.items():
+        message += f"🏷️ *{nome}*\n"
+        for registro in registros:
+            # Ajusta para a nova estrutura da planilha (8 colunas)
+            tipo = registro[1] if len(registro) > 1 else "N/A"
+            marca = registro[2] if len(registro) > 2 else "N/A"
+            unidade = registro[3] if len(registro) > 3 else "N/A"
+            preco = registro[4] if len(registro) > 4 else "N/A"
+            obs = registro[5] if len(registro) > 5 else ""
+            preco_por_unidade = registro[6] if len(registro) > 6 else "N/A"
+            timestamp = registro[7] if len(registro) > 7 else "N/A"
+
+            message += f"  📦 {tipo} | 🏭 {marca}\n"
+            message += f"  📏 {unidade} | 💵 R$ {preco}\n" # Exibe com ponto
+            if preco_por_unidade and preco_por_unidade != "N/A":
+                message += f"  📊 {preco_por_unidade}\n"
+            if obs:
+                message += f"  📝 {obs}\n"
+            message += f"  🕒 {timestamp}\n---\n"
+
+    # Envia a mensagem em partes se for muito longa
+    if len(message) > 4096:
+        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
+        for part in parts:
+            await update.message.reply_text(part, reply_markup=main_menu_keyboard() if part is parts[-1] else None, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(
+            message,
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+    return MAIN_MENU
 
 # === CONVERSATION HANDLER ===
 def build_conv_handler():
@@ -833,7 +889,7 @@ def build_conv_handler():
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
             MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
             MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
-            # MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Comentado temporariamente
+            MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Adicionado corretamente
             MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help)
         ],
         states={
@@ -841,7 +897,7 @@ def build_conv_handler():
                 MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
                 MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
-                # MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Comentado temporariamente
+                MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Adicionado corretamente
                 MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help)
             ],
             AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
@@ -849,12 +905,12 @@ def build_conv_handler():
             # Estados para a nova funcionalidade
             AWAIT_DELETION_CHOICE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_edit_delete), # Primeira escolha de produto
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_multiple_entry_choice) # Escolha entre múltiplas entradas
             ],
-            # AWAIT_DELETION_CHOICE também lida com a escolha entre múltiplas entradas (reutilização de estado)
             AWAIT_EDIT_DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_delete_choice)],
             AWAIT_EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price)],
             CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)],
-            # SEARCH_PRODUCT_HISTORY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_search_results)], # Se estiver implementada
+            SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_search_results)], # Estado adicionado
         },
         fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)],
     )
@@ -907,10 +963,8 @@ def run_flask():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == "__main__":
-    # Redefinindo os estados para garantir consistência
-    global MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION
-    MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION = range(7)
-    
+    # Garantir que os estados estejam definidos corretamente no escopo global
+    # (Já estão definidos no topo, mas reforçando)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     Thread(target=run_flask).start()
