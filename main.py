@@ -83,8 +83,8 @@ def calculate_unit_price(unit_str, price):
     # Padrões de regex para identificar unidades
     # Ordem importante: verificar os mais específicos primeiro
     patterns = {
-        # Papel Higiênico e similares: "6 rolos, 30M"
-        'rolos_e_metros': r'(\d+(?:[.]?\d*))\s*rolos?\s*,\s*(\d+(?:[.]?\d*))\s*m',
+        # Papel Higiênico e similares: "6 rolos 30M" (SEM VÍRGULA)
+        'rolos_e_metros': r'(\d+(?:[.]?\d*))\s*rolos?\s+(\d+(?:[.]?\d*))\s*m',
         # Múltiplas embalagens: "3 tubos de 90g", "2 pacotes de 500ml"
         'multiplas_embalagens': r'(\d+(?:[.]?\d*))\s*(tubos?|pacotes?|caixas?)\s*de\s*(\d+(?:[.]?\d*))\s*(kg|g|l|ml)',
         # Unidades simples
@@ -104,7 +104,7 @@ def calculate_unit_price(unit_str, price):
     }
 
     # Verifica cada padrão na ordem correta
-    # 1. Roilos e Metros
+    # 1. Roilos e Metros (SEM VÍRGULA)
     if re.search(patterns['rolos_e_metros'], unit_str_lower):
         match = re.search(patterns['rolos_e_metros'], unit_str_lower)
         rolos = float(match.group(1))
@@ -309,21 +309,25 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Mensagem de ajuda atualizada para refletir o uso de ponto no preço
+    # Mensagem de ajuda atualizada com exemplos variados E FORMATO CORRETO DO PAPEL HIGIÊNICO
     help_text = (
         "🛒 Como adicionar um produto corretamente:\n"
         "Use o seguinte formato (uma linha por produto):\n"
-        "*Produto | Tipo | Marca | Unidade | Preço | Observações*\n\n"
+        "*Produto, Tipo, Marca, Unidade, Preço, Observações*\n\n"
         "*Exemplos:*\n"
-        "Arroz, Branco, Camil, 5 kg, 25.99\n" # Ponto no preço
-        "Leite, Integral, Italac, 1 L, 4.49\n"  # Ponto no preço
-        "Papel Higiênico, Compacto, Max, 12 rolos, 30M, 14.90\n" # Ponto no preço
-        "Creme Dental, Sensitive, Colgate, 180g, 27.75, 3 tubos de 60g\n" # Ponto no preço
-        "Ovo, Branco, Grande, 30 und, 16.90\n\n" # Ponto no preço
+        "• Arroz, Branco, Camil, 5 kg, 25.99\n"
+        "• Leite, Integral, Italac, 1 L, 4.49\n"
+        "• Papel Higiênico, Compacto, Max, 12 rolos 30M, 14.90  ← Sem vírgula entre rolos e metros\n"
+        "• Creme Dental, Sensitive, Colgate, 180g, 27.75, 3 tubos de 60g\n"
+        "• Ovo, Branco, Grande, 30 und, 16.90\n"
+        "• Sabão em Pó, Concentrado, Omo, 1.5 kg, 22.50\n"
+        "• Refrigerante, Coca-Cola, 2 L, 8.99\n"
+        "• Chocolate, Ao Leite, Nestlé, 90g, 4.50\n\n"
         "*💡 Dicas:*\n"
-        "- Use **ponto como separador decimal** no preço (Ex: 4.99).\n" # Instrução atualizada
-        "- Para produtos com unidades compostas (como '6 rolos, 40M'), descreva assim para que o sistema calcule o custo por metro.\n"
-        "- O sistema automaticamente calculará o **preço por unidade de medida** (Kg, L, ml, g, und, metro, folha, etc.) e informará qual opção é mais econômica.\n"
+        "- Use **ponto como separador decimal** no preço (Ex: 4.99).\n"
+        "- Para Papel Higiênico, use o formato: [Quantidade] rolos [Metragem]M (Ex: 12 rolos 30M).\n"
+        "- Para produtos com múltiplas embalagens (como '3 tubos de 90g'), descreva assim para que o sistema calcule o custo por unidade.\n"
+        "- O sistema automaticamente calculará o **preço por unidade de medida** (Kg, L, ml, g, und, rolo, metro, etc.) e informará qual opção é mais econômica.\n"
         "- Você também pode digitar diretamente o nome de um produto para pesquisar seu preço!"
     )
     await update.message.reply_text(
@@ -334,11 +338,16 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def ask_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Instrução atualizada para refletir o uso de ponto no preço
+    # Instrução atualizada com exemplos variados E FORMATO CORRETO DO PAPEL HIGIÊNICO
     await update.message.reply_text(
         "📝 Digite os dados do produto no formato:\n"
         "*Produto, Tipo, Marca, Unidade, Preço, Observações*\n\n"
-        "*Exemplo:* Arroz, Branco, Camil, 5 kg, 25.99\n" # Ponto no preço
+        "*Exemplos:*\n"
+        "• Arroz, Branco, Camil, 5 kg, 25.99\n"
+        "• Leite, Integral, Italac, 1 L, 4.49\n"
+        "• Papel Higiênico, Compacto, Max, 12 rolos 30M, 14.90  ← Sem vírgula entre rolos e metros\n"
+        "• Creme Dental, Sensitive, Colgate, 180g, 27.75, 3 tubos de 60g\n"
+        "• Ovo, Branco, Grande, 30 und, 16.90\n\n"
         "Ou digite ❌ *Cancelar* para voltar",
         reply_markup=cancel_keyboard(),
         parse_mode="Markdown"
@@ -354,7 +363,13 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(
             "⚠️ Formato inválido. Você precisa informar pelo menos:\n"
             "*Produto, Tipo, Marca, Unidade, Preço*\n\n"
-            "*Exemplo:* Arroz, Branco, Camil, 5 kg, 25.99", # Ponto no preço
+            "*Exemplos:*\n"
+            "• Arroz, Branco, Camil, 5 kg, 25.99\n"
+            "• Leite, Integral, Italac, 1 L, 4.49\n"
+            "• Papel Higiênico, Compacto, Max, 12 rolos 30M, 14.90  ← Sem vírgula entre rolos e metros\n"
+            "• Creme Dental, Sensitive, Colgate, 180g, 27.75, 3 tubos de 60g\n"
+            "• Ovo, Branco, Grande, 30 und, 16.90\n\n"
+            "Ou digite ❌ *Cancelar* para voltar",
             reply_markup=cancel_keyboard(),
             parse_mode="Markdown"
         )
@@ -365,7 +380,7 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
     price = parse_price(price_str)
     if price is None:
         await update.message.reply_text(
-            "⚠️ Preço inválido. Use **ponto como separador decimal** (ex: 4.99).\n" # Mensagem atualizada
+            "⚠️ Preço inválido. Use **ponto como separador decimal** (ex: 4.99).\n"
             "Por favor, digite novamente os dados do produto:",
             reply_markup=cancel_keyboard(),
             parse_mode="Markdown" # Para negrito
