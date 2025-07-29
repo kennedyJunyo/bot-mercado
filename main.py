@@ -225,10 +225,77 @@ def calculate_unit_price(unit_str, price):
     # Se nenhum padrão for encontrado, retorna o preço unitário com a unidade original
     return {'preco_unitario': price, 'unidade': unit_str}
 
+# === FUNÇÕES DE PESQUISA ===
+async def show_search_results_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, search_term: str):
+    """Mostra os resultados da pesquisa direta de produto."""
+    try:
+        sheet = get_sheet()
+        rows = sheet.get_all_values()[1:] # Ignora cabeçalho
+    except Exception as e:
+        logging.error(f"Erro ao acessar a planilha para pesquisa direta: {e}")
+        await update.message.reply_text(
+            "❌ Erro ao acessar os produtos. Tente novamente mais tarde.",
+            reply_markup=main_menu_keyboard()
+        )
+        return MAIN_MENU
+
+    # Filtra produtos cujo nome começa com o termo pesquisado
+    matching_rows = [row for row in rows if row[0].lower().startswith(search_term.lower())]
+
+    if not matching_rows:
+        await update.message.reply_text(
+            f"📭 Produto '*{search_term}*' não encontrado.\n\n"
+            "Você pode adicioná-lo usando o botão *➕ Adicionar Produto*.",
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    message = f"🔍 Resultados para '*{search_term}*':\n\n"
+    produtos_agrupados = {}
+    for row in matching_rows:
+         nome = row[0]
+         if nome not in produtos_agrupados:
+             produtos_agrupados[nome] = []
+         produtos_agrupados[nome].append(row)
+
+    for nome, registros in produtos_agrupados.items():
+        message += f"🏷️ *{nome}*\n"
+        for registro in registros:
+            # Ajusta para a nova estrutura da planilha (8 colunas)
+            tipo = registro[1] if len(registro) > 1 else "N/A"
+            marca = registro[2] if len(registro) > 2 else "N/A"
+            unidade = registro[3] if len(registro) > 3 else "N/A"
+            preco = registro[4] if len(registro) > 4 else "N/A"
+            obs = registro[5] if len(registro) > 5 else ""
+            preco_por_unidade = registro[6] if len(registro) > 6 else "N/A"
+            timestamp = registro[7] if len(registro) > 7 else "N/A"
+
+            message += f"  📦 {tipo} | 🏭 {marca}\n"
+            message += f"  📏 {unidade} | 💵 R$ {preco}\n" # Exibe com ponto
+            if preco_por_unidade and preco_por_unidade != "N/A":
+                message += f"  📊 {preco_por_unidade}\n"
+            if obs:
+                message += f"  📝 {obs}\n"
+            message += f"  🕒 {timestamp}\n---\n"
+
+    # Envia a mensagem em partes se for muito longa
+    if len(message) > 4096:
+        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
+        for part in parts:
+            await update.message.reply_text(part, reply_markup=main_menu_keyboard() if part is parts[-1] else None, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(
+            message,
+            reply_markup=main_menu_keyboard(),
+            parse_mode="Markdown"
+        )
+    return MAIN_MENU
+
 # === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛒 *Bot de Compras Inteligente* 🛒\nEscolha uma opção:",
+        "🛒 *Bot de Compras Inteligente* 🛒\nEscolha uma opção ou digite o nome de um produto para pesquisar:",
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
@@ -256,7 +323,8 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*💡 Dicas:*\n"
         "- Use **ponto como separador decimal** no preço (Ex: 4.99).\n" # Instrução atualizada
         "- Para produtos com unidades compostas (como '6 rolos, 40M'), descreva assim para que o sistema calcule o custo por metro.\n"
-        "- O sistema automaticamente calculará o **preço por unidade de medida** (Kg, L, ml, g, und, metro, folha, etc.) e informará qual opção é mais econômica."
+        "- O sistema automaticamente calculará o **preço por unidade de medida** (Kg, L, ml, g, und, metro, folha, etc.) e informará qual opção é mais econômica.\n"
+        "- Você também pode digitar diretamente o nome de um produto para pesquisar seu preço!"
     )
     await update.message.reply_text(
         help_text,
@@ -817,69 +885,21 @@ async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await cancel(update, context)
 
     search_term = update.message.text.strip().title()
+    return await show_search_results_direct(update, context, search_term)
 
-    try:
-        sheet = get_sheet()
-        rows = sheet.get_all_values()[1:] # Ignora cabeçalho
-    except Exception as e:
-        logging.error(f"Erro ao acessar a planilha para pesquisa: {e}")
-        await update.message.reply_text(
-            "❌ Erro ao acessar os produtos. Tente novamente mais tarde.",
-            reply_markup=main_menu_keyboard()
-        )
+# === HANDLER PARA PESQUISA DIRETA ===
+async def handle_direct_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lida com a pesquisa direta de produtos no menu principal ou na tela de pesquisa."""
+    search_term = update.message.text.strip()
+    
+    # Verifica se o termo corresponde a algum botão do menu principal
+    menu_buttons = ["➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos", "🔍 Pesquisar Produto", "ℹ️ Ajuda", "❌ Cancelar"]
+    if search_term in menu_buttons:
+        # Se for um botão do menu, ignora a pesquisa direta
         return MAIN_MENU
-
-    # Filtra produtos cujo nome começa com o termo pesquisado
-    matching_rows = [row for row in rows if row[0].lower().startswith(search_term.lower())]
-
-    if not matching_rows:
-        await update.message.reply_text(
-            f"📭 Nenhum produto encontrado começando com '*{search_term}*'.",
-            reply_markup=main_menu_keyboard(),
-             parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    message = f"🔍 Resultados para '*{search_term}*':\n\n"
-    produtos_agrupados = {}
-    for row in matching_rows:
-         nome = row[0]
-         if nome not in produtos_agrupados:
-             produtos_agrupados[nome] = []
-         produtos_agrupados[nome].append(row)
-
-    for nome, registros in produtos_agrupados.items():
-        message += f"🏷️ *{nome}*\n"
-        for registro in registros:
-            # Ajusta para a nova estrutura da planilha (8 colunas)
-            tipo = registro[1] if len(registro) > 1 else "N/A"
-            marca = registro[2] if len(registro) > 2 else "N/A"
-            unidade = registro[3] if len(registro) > 3 else "N/A"
-            preco = registro[4] if len(registro) > 4 else "N/A"
-            obs = registro[5] if len(registro) > 5 else ""
-            preco_por_unidade = registro[6] if len(registro) > 6 else "N/A"
-            timestamp = registro[7] if len(registro) > 7 else "N/A"
-
-            message += f"  📦 {tipo} | 🏭 {marca}\n"
-            message += f"  📏 {unidade} | 💵 R$ {preco}\n" # Exibe com ponto
-            if preco_por_unidade and preco_por_unidade != "N/A":
-                message += f"  📊 {preco_por_unidade}\n"
-            if obs:
-                message += f"  📝 {obs}\n"
-            message += f"  🕒 {timestamp}\n---\n"
-
-    # Envia a mensagem em partes se for muito longa
-    if len(message) > 4096:
-        parts = [message[i:i+4096] for i in range(0, len(message), 4096)]
-        for part in parts:
-            await update.message.reply_text(part, reply_markup=main_menu_keyboard() if part is parts[-1] else None, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(
-            message,
-            reply_markup=main_menu_keyboard(),
-            parse_mode="Markdown"
-        )
-    return MAIN_MENU
+    
+    # Realiza a pesquisa direta
+    return await show_search_results_direct(update, context, search_term)
 
 # === CONVERSATION HANDLER ===
 def build_conv_handler():
@@ -889,16 +909,20 @@ def build_conv_handler():
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
             MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
             MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
-            MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Adicionado corretamente
-            MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help)
+            MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history),
+            MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help),
+            # Handler para pesquisa direta (qualquer texto que não seja um comando do menu)
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_search)
         ],
         states={
             MAIN_MENU: [
                 MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
                 MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
-                MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history), # Adicionado corretamente
-                MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help)
+                MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history),
+                MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help),
+                # Handler para pesquisa direta no estado MAIN_MENU
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_search)
             ],
             AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
             CONFIRM_PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_product)],
