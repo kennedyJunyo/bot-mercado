@@ -25,7 +25,8 @@ CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho 
 
 # === ESTADOS DO CONVERSATIONHANDLER ===
 # Definindo os estados de forma clara e explícita
-MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT = range(8)
+# Adicionando o novo estado AWAIT_ENTRY_CHOICE
+MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT, AWAIT_ENTRY_CHOICE = range(9)
 
 # === LOGGING ===
 logging.basicConfig(
@@ -228,9 +229,12 @@ def calculate_unit_price(unit_str, price):
 # === FUNÇÕES DE PESQUISA ===
 async def show_search_results_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, search_term: str):
     """Mostra os resultados da pesquisa direta de produto."""
+    user_id = update.effective_user.id
     try:
         sheet = get_sheet()
         rows = sheet.get_all_values()[1:] # Ignora cabeçalho
+        # Filtra produtos do usuário atual cujo nome começa com o termo pesquisado
+        matching_rows = [row for row in rows if row[0] == str(user_id) and row[1].lower().startswith(search_term.lower())]
     except Exception as e:
         logging.error(f"Erro ao acessar a planilha para pesquisa direta: {e}")
         await update.message.reply_text(
@@ -239,12 +243,9 @@ async def show_search_results_direct(update: Update, context: ContextTypes.DEFAU
         )
         return MAIN_MENU
 
-    # Filtra produtos cujo nome começa com o termo pesquisado
-    matching_rows = [row for row in rows if row[0].lower().startswith(search_term.lower())]
-
     if not matching_rows:
         await update.message.reply_text(
-            f"📭 Produto '*{search_term}*' não encontrado.\n\n"
+            f"📭 Produto '*{search_term}*' não encontrado na sua lista.\n\n"
             "Você pode adicioná-lo usando o botão *➕ Adicionar Produto*.",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
@@ -254,7 +255,7 @@ async def show_search_results_direct(update: Update, context: ContextTypes.DEFAU
     message = f"🔍 Resultados para '*{search_term}*':\n\n"
     produtos_agrupados = {}
     for row in matching_rows:
-         nome = row[0]
+         nome = row[1] # Coluna B é o nome do produto
          if nome not in produtos_agrupados:
              produtos_agrupados[nome] = []
          produtos_agrupados[nome].append(row)
@@ -262,14 +263,14 @@ async def show_search_results_direct(update: Update, context: ContextTypes.DEFAU
     for nome, registros in produtos_agrupados.items():
         message += f"🏷️ *{nome}*\n"
         for registro in registros:
-            # Ajusta para a nova estrutura da planilha (8 colunas)
-            tipo = registro[1] if len(registro) > 1 else "N/A"
-            marca = registro[2] if len(registro) > 2 else "N/A"
-            unidade = registro[3] if len(registro) > 3 else "N/A"
-            preco = registro[4] if len(registro) > 4 else "N/A"
-            obs = registro[5] if len(registro) > 5 else ""
-            preco_por_unidade = registro[6] if len(registro) > 6 else "N/A"
-            timestamp = registro[7] if len(registro) > 7 else "N/A"
+            # Ajusta para a nova estrutura da planilha (9 colunas, com user_id na coluna A)
+            tipo = registro[2] if len(registro) > 2 else "N/A" # Coluna C
+            marca = registro[3] if len(registro) > 3 else "N/A" # Coluna D
+            unidade = registro[4] if len(registro) > 4 else "N/A" # Coluna E
+            preco = registro[5] if len(registro) > 5 else "N/A" # Coluna F
+            obs = registro[6] if len(registro) > 6 else "" # Coluna G
+            preco_por_unidade = registro[7] if len(registro) > 7 else "N/A" # Coluna H
+            timestamp = registro[8] if len(registro) > 8 else "N/A" # Coluna I
 
             message += f"  📦 {tipo} | 🏭 {marca}\n"
             message += f"  📏 {unidade} | 💵 R$ {preco}\n" # Exibe com ponto
@@ -446,6 +447,7 @@ async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
 
+    user_id = update.effective_user.id
     product = context.user_data.get('current_product')
     unit_info = context.user_data.get('unit_info')
 
@@ -456,7 +458,7 @@ async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
          return MAIN_MENU
 
-    # Prepara o preço por unidade para salvar na coluna G
+    # Prepara o preço por unidade para salvar na coluna H
     unit_price_str = ""
     # Prioriza mostrar a unidade mais relevante para comparação
     if 'preco_por_kg' in unit_info:
@@ -484,17 +486,18 @@ async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet = get_sheet()
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         sheet.append_row([
-            product['nome'],
-            product['tipo'],
-            product['marca'],
-            product['unidade'],
-            product['preco'], # Mantém o formato original com ponto
-            product['observacoes'],
-            unit_price_str, # Coluna G: Preço por Unidade de Medida
-            timestamp
+            str(user_id), # Coluna A: user_id
+            product['nome'], # Coluna B
+            product['tipo'], # Coluna C
+            product['marca'], # Coluna D
+            product['unidade'], # Coluna E
+            product['preco'], # Coluna F - Mantém o formato original com ponto
+            product['observacoes'], # Coluna G
+            unit_price_str, # Coluna H: Preço por Unidade de Medida
+            timestamp # Coluna I
         ])
         await update.message.reply_text(
-            f"✅ Produto *{product['nome']}* salvo com sucesso!",
+            f"✅ Produto *{product['nome']}* salvo com sucesso na sua lista!",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
@@ -509,9 +512,12 @@ async def save_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     try:
         sheet = get_sheet()
         rows = sheet.get_all_values()[1:]  # Ignora cabeçalho
+        # Filtra produtos do usuário atual
+        user_rows = [row for row in rows if row[0] == str(user_id)]
     except Exception as e:
         logging.error(f"Erro ao acessar a planilha: {e}")
         await update.message.reply_text(
@@ -520,23 +526,23 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
 
-    if not rows:
+    if not user_rows:
         await update.message.reply_text(
-            "📭 Nenhum produto cadastrado.",
+            "📭 Nenhum produto cadastrado na sua lista.",
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
 
     message = "📋 *Lista de Produtos*\n"
-    for row in rows:
-        # Ajusta para a nova estrutura da planilha (8 colunas)
-        nome = row[0] if len(row) > 0 else "N/A"
-        tipo = row[1] if len(row) > 1 else "N/A"
-        marca = row[2] if len(row) > 2 else "N/A"
-        unidade = row[3] if len(row) > 3 else "N/A"
-        preco = row[4] if len(row) > 4 else "N/A"
-        # obs = row[5] if len(row) > 5 else "" # Não mostrado na lista para economizar espaço
-        preco_por_unidade = row[6] if len(row) > 6 else "N/A"
+    for row in user_rows:
+        # Ajusta para a nova estrutura da planilha (9 colunas, com user_id na coluna A)
+        nome = row[1] if len(row) > 1 else "N/A" # Coluna B
+        tipo = row[2] if len(row) > 2 else "N/A" # Coluna C
+        marca = row[3] if len(row) > 3 else "N/A" # Coluna D
+        unidade = row[4] if len(row) > 4 else "N/A" # Coluna E
+        preco = row[5] if len(row) > 5 else "N/A" # Coluna F
+        # obs = row[6] if len(row) > 6 else "" # Coluna G - Não mostrado na lista para economizar espaço
+        preco_por_unidade = row[7] if len(row) > 7 else "N/A" # Coluna H
 
         message += (
             f"🏷️ *{nome}* ({tipo})\n"
@@ -560,9 +566,12 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === NOVA FUNÇÃO: EDITAR OU EXCLUIR ===
 async def edit_or_delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Permite selecionar um produto para editar ou excluir."""
+    user_id = update.effective_user.id
     try:
         sheet = get_sheet()
         rows = sheet.get_all_values()[1:]
+        # Filtra produtos do usuário atual
+        user_rows = [row for row in rows if row[0] == str(user_id)]
     except Exception as e:
         logging.error(f"Erro ao acessar a planilha para editar/excluir: {e}")
         await update.message.reply_text(
@@ -571,10 +580,10 @@ async def edit_or_delete_product(update: Update, context: ContextTypes.DEFAULT_T
         )
         return MAIN_MENU
 
-    produtos = list(set([row[0] for row in rows])) # Nomes únicos
+    produtos = list(set([row[1] for row in user_rows])) # Nomes únicos (Coluna B)
     if not produtos:
         await update.message.reply_text(
-            "📭 Nenhum produto cadastrado para editar ou excluir.",
+            "📭 Nenhum produto cadastrado para editar ou excluir na sua lista.",
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
@@ -592,11 +601,14 @@ async def confirm_edit_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
 
+    user_id = update.effective_user.id
     produto_nome = update.message.text.strip()
     try:
         sheet = get_sheet()
         all_rows = sheet.get_all_values()
         rows = all_rows[1:] # Ignora cabeçalho
+        # Filtra produtos do usuário atual
+        user_rows = [row for row in rows if row[0] == str(user_id)]
     except Exception as e:
         logging.error(f"Erro ao acessar a planilha para confirmar editar/excluir: {e}")
         await update.message.reply_text(
@@ -607,8 +619,8 @@ async def confirm_edit_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Encontra todas as linhas com o produto (índices 1-based para gspread e armazenamento interno)
     matching_entries = []
-    for i, row in enumerate(rows):
-        if row[0] == produto_nome:
+    for i, row in enumerate(rows): # Itera sobre todas as linhas para obter o índice correto da planilha
+        if row[0] == str(user_id) and row[1] == produto_nome: # Verifica user_id e nome do produto
             # Armazena o índice da planilha (1-based) e os dados da linha
             matching_entries.append({
                 'sheet_index': i + 2, # +2 porque 'rows' é [1:] e gspread é 1-based
@@ -617,7 +629,7 @@ async def confirm_edit_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not matching_entries:
         await update.message.reply_text(
-            f"ℹ️ Produto '{produto_nome}' não encontrado.",
+            f"ℹ️ Produto '{produto_nome}' não encontrado na sua lista.",
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
@@ -631,16 +643,16 @@ async def confirm_edit_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
         row_data = entry['data']
         # Formata a mensagem com os detalhes do produto
         message = f"✏️ Produto selecionado:\n"
-        message += f"🏷️ *{row_data[0]}* ({row_data[1]})\n"
-        message += f"🏭 {row_data[2]}\n"
-        message += f"📏 {row_data[3]}\n"
-        message += f"💵 *Preço*: R$ {row_data[4]}\n" # Exibe com ponto
-        if len(row_data) > 5 and row_data[5]:
-            message += f"📝 {row_data[5]}\n"
-        if len(row_data) > 6 and row_data[6]:
-            message += f"📊 {row_data[6]}\n"
-        if len(row_data) > 7 and row_data[7]:
-            message += f"🕒 {row_data[7]}\n"
+        message += f"🏷️ *{row_data[1]}* ({row_data[2]})\n" # Coluna B e C
+        message += f"🏭 {row_data[3]}\n" # Coluna D
+        message += f"📏 {row_data[4]}\n" # Coluna E
+        message += f"💵 *Preço*: R$ {row_data[5]}\n" # Coluna F - Exibe com ponto
+        if len(row_data) > 6 and row_data[6]: # Coluna G
+            message += f"📝 {row_data[6]}\n"
+        if len(row_data) > 7 and row_data[7]: # Coluna H
+            message += f"📊 {row_data[7]}\n"
+        if len(row_data) > 8 and row_data[8]: # Coluna I
+            message += f"🕒 {row_data[8]}\n"
 
         context.user_data['selected_entry_index'] = entry['sheet_index']
         await update.message.reply_text(
@@ -656,32 +668,36 @@ async def confirm_edit_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Se houver múltiplas entradas, lista para o usuário escolher
     else:
         message = f"🔍 Foram encontradas múltiplas entradas para *{produto_nome}*:\n\n"
+        buttons = []
         for i, entry in enumerate(matching_entries):
             row_data = entry['data']
             # Criamos um identificador único baseado em Tipo, Marca, Unidade para ajudar o usuário a escolher
-            tipo = row_data[1] if len(row_data) > 1 else "N/A"
-            marca = row_data[2] if len(row_data) > 2 else "N/A"
-            unidade = row_data[3] if len(row_data) > 3 else "N/A"
-            preco = row_data[4] if len(row_data) > 4 else "N/A"
+            tipo = row_data[2] if len(row_data) > 2 else "N/A" # Coluna C
+            marca = row_data[3] if len(row_data) > 3 else "N/A" # Coluna D
+            unidade = row_data[4] if len(row_data) > 4 else "N/A" # Coluna E
+            preco = row_data[5] if len(row_data) > 5 else "N/A" # Coluna F
             
             message += f"{i+1}. {tipo} | {marca} | {unidade} | R$ {preco}\n"
+            buttons.append([KeyboardButton(str(i+1))]) # Adiciona botão com o número da opção
         
-        message += "\nDigite o *número* da entrada que deseja editar/excluir:"
+        message += "\nSelecione o número da entrada que deseja editar/excluir:"
+        buttons.append([KeyboardButton("❌ Cancelar")]) # Adiciona botão de cancelar
         
         await update.message.reply_text(
             message,
             parse_mode="Markdown",
-            reply_markup=cancel_keyboard()
+            reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True) # Teclado com botões
         )
-        return AWAIT_DELETION_CHOICE # Reutilizando para pegar o número
+        return AWAIT_ENTRY_CHOICE # Muda para o novo estado
 
 async def handle_multiple_entry_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Lida com a escolha do usuário quando há múltiplas entradas."""
+    """Lida com a escolha do usuário quando há múltiplas entradas, via botão ou texto."""
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
     
     try:
-        choice = int(update.message.text.strip())
+        choice_text = update.message.text.strip()
+        choice = int(choice_text)
         matching_entries = context.user_data.get('matching_entries', [])
         if 1 <= choice <= len(matching_entries):
             selected_entry = matching_entries[choice - 1] # -1 porque o usuário digita 1-based
@@ -689,16 +705,16 @@ async def handle_multiple_entry_choice(update: Update, context: ContextTypes.DEF
             
             # Mostra os detalhes da entrada selecionada
             message = f"✏️ Entrada selecionada:\n"
-            message += f"🏷️ *{row_data[0]}* ({row_data[1]})\n"
-            message += f"🏭 {row_data[2]}\n"
-            message += f"📏 {row_data[3]}\n"
-            message += f"💵 *Preço*: R$ {row_data[4]}\n" # Exibe com ponto
-            if len(row_data) > 5 and row_data[5]:
-                message += f"📝 {row_data[5]}\n"
-            if len(row_data) > 6 and row_data[6]:
-                message += f"📊 {row_data[6]}\n"
-            if len(row_data) > 7 and row_data[7]:
-                message += f"🕒 {row_data[7]}\n"
+            message += f"🏷️ *{row_data[1]}* ({row_data[2]})\n" # Coluna B e C
+            message += f"🏭 {row_data[3]}\n" # Coluna D
+            message += f"📏 {row_data[4]}\n" # Coluna E
+            message += f"💵 *Preço*: R$ {row_data[5]}\n" # Coluna F - Exibe com ponto
+            if len(row_data) > 6 and row_data[6]: # Coluna G
+                message += f"📝 {row_data[6]}\n"
+            if len(row_data) > 7 and row_data[7]: # Coluna H
+                message += f"📊 {row_data[7]}\n"
+            if len(row_data) > 8 and row_data[8]: # Coluna I
+                message += f"🕒 {row_data[8]}\n"
                 
             context.user_data['selected_entry_index'] = selected_entry['sheet_index']
             await update.message.reply_text(
@@ -713,11 +729,37 @@ async def handle_multiple_entry_choice(update: Update, context: ContextTypes.DEF
         else:
             raise ValueError("Escolha inválida")
     except (ValueError, IndexError):
+        # Se não for um número válido, mostra novamente as opções
+        produto_nome = context.user_data.get('selected_product_name', 'desconhecido')
+        matching_entries = context.user_data.get('matching_entries', [])
+        if not matching_entries:
+            await update.message.reply_text(
+                "❌ Erro ao processar a escolha. Por favor, tente novamente.",
+                reply_markup=main_menu_keyboard()
+            )
+            return MAIN_MENU
+            
+        message = f"⚠️ Escolha inválida. Selecione uma das opções para *{produto_nome}*:\n\n"
+        buttons = []
+        for i, entry in enumerate(matching_entries):
+            row_data = entry['data']
+            tipo = row_data[2] if len(row_data) > 2 else "N/A"
+            marca = row_data[3] if len(row_data) > 3 else "N/A"
+            unidade = row_data[4] if len(row_data) > 4 else "N/A"
+            preco = row_data[5] if len(row_data) > 5 else "N/A"
+            
+            message += f"{i+1}. {tipo} | {marca} | {unidade} | R$ {preco}\n"
+            buttons.append([KeyboardButton(str(i+1))])
+        
+        message += "\nSelecione o número da entrada que deseja editar/excluir:"
+        buttons.append([KeyboardButton("❌ Cancelar")])
+        
         await update.message.reply_text(
-            "⚠️ Escolha inválida. Por favor, digite o número da entrada listada:",
-            reply_markup=cancel_keyboard()
+            message,
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(buttons, resize_keyboard=True)
         )
-        return AWAIT_DELETION_CHOICE # Volta para pedir a escolha novamente
+        return AWAIT_ENTRY_CHOICE # Permanece no mesmo estado
 
 async def process_edit_delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processa a escolha de editar ou excluir."""
@@ -798,14 +840,14 @@ async def handle_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
              
         row_data = all_rows[sheet_index - 1] # -1 para 0-based index do Python
         
-        # Atualiza o preço na coluna E (índice 5 no gspread é a coluna 5, mas update_cell usa 1-based)
-        sheet.update_cell(sheet_index, 5, new_price_str) # Coluna E é o índice 5 no gspread
+        # Atualiza o preço na coluna F (índice 6 no gspread é a coluna 6, mas update_cell usa 1-based)
+        sheet.update_cell(sheet_index, 6, new_price_str) # Coluna F é o índice 6 no gspread
         
         # Recalcula o preço por unidade (opcional, mas recomendado)
-        unidade_str = row_data[3] if len(row_data) > 3 else ""
+        unidade_str = row_data[4] if len(row_data) > 4 else "" # Coluna E
         unit_info = calculate_unit_price(unidade_str, new_price)
         
-        # Prepara o novo preço por unidade para salvar na coluna G
+        # Prepara o novo preço por unidade para salvar na coluna H
         unit_price_str = ""
         if 'preco_por_kg' in unit_info:
             unit_price_str = f"R$ {format_price(unit_info['preco_por_kg'])}/kg"
@@ -826,12 +868,12 @@ async def handle_edit_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             unit_price_str = f"R$ {format_price(new_price)}/unidade"
             
-        # Atualiza o preço por unidade na coluna G (índice 7 no gspread)
-        sheet.update_cell(sheet_index, 7, unit_price_str) # Coluna G é o índice 7 no gspread
+        # Atualiza o preço por unidade na coluna H (índice 8 no gspread)
+        sheet.update_cell(sheet_index, 8, unit_price_str) # Coluna H é o índice 8 no gspread
         
-        # Atualiza o timestamp na coluna H (índice 8 no gspread)
+        # Atualiza o timestamp na coluna I (índice 9 no gspread)
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        sheet.update_cell(sheet_index, 8, timestamp) # Coluna H é o índice 8 no gspread
+        sheet.update_cell(sheet_index, 9, timestamp) # Coluna I é o índice 9 no gspread
         
         await update.message.reply_text(
             f"✅ Preço do produto *{produto_nome}* atualizado para R$ {new_price_str}!",
@@ -865,7 +907,7 @@ async def execute_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sheet = get_sheet()
             sheet.delete_rows(sheet_index)
             await update.message.reply_text(
-                f"🗑️ Produto foi excluído permanentemente.",
+                f"🗑️ Produto foi excluído permanentemente da sua lista.",
                 reply_markup=main_menu_keyboard(),
                 parse_mode="Markdown"
             )
@@ -943,13 +985,16 @@ def build_conv_handler():
             CONFIRM_PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_product)],
             # Estados para a nova funcionalidade
             AWAIT_DELETION_CHOICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_edit_delete), # Primeira escolha de produto
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_multiple_entry_choice) # Escolha entre múltiplas entradas
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_edit_delete), # Escolhe o nome do produto
+            ],
+            # Novo estado para escolher a entrada específica
+            AWAIT_ENTRY_CHOICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_multiple_entry_choice) # Escolhe o número da entrada listada (via texto ou botão)
             ],
             AWAIT_EDIT_DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_edit_delete_choice)],
             AWAIT_EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price)],
             CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, execute_deletion)],
-            SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_search_results)], # Estado adicionado
+            SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, show_search_results)],
         },
         fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)],
     )
