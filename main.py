@@ -15,8 +15,8 @@ from telegram.ext import (
     MessageHandler,
     ConversationHandler,
     ContextTypes,
-    filters, # <-- Vírgula adicionada aqui
-    CallbackQueryHandler # <-- E aqui
+    filters,
+    CallbackQueryHandler # <-- Adicionado aqui
 )
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -30,7 +30,7 @@ CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho 
 # === ESTADOS DO CONVERSATIONHANDLER ===
 # Definindo os estados de forma clara e explícita
 # Adicionando estados para o fluxo de compartilhamento
-MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT, AWAIT_ENTRY_CHOICE, AWAIT_INVITE_CODE = range(10)
+MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT, AWAIT_ENTRY_CHOICE, AWAIT_INVITE_CODE, AWAIT_INVITE_CODE_INPUT = range(11)
 
 # === LOGGING ===
 logging.basicConfig(
@@ -176,10 +176,11 @@ async def listar_membros_do_grupo(client, grupo_id: str) -> list:
 
 # === TECLADOS ===
 def main_menu_keyboard():
+    # Adicionando o novo botão "🔐 Inserir Código"
     return ReplyKeyboardMarkup([
         [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar ou Excluir")],
         [KeyboardButton("📋 Listar Produtos"), KeyboardButton("🔍 Pesquisar Produto")],
-        [KeyboardButton("ℹ️ Ajuda")]
+        [KeyboardButton("🔐 Inserir Código"), KeyboardButton("ℹ️ Ajuda")], # Botão adicionado
     ], resize_keyboard=True)
 
 def cancel_keyboard():
@@ -431,6 +432,27 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MAIN_MENU
 
+# === NOVAS FUNÇÕES PARA INSERIR CÓDIGO ===
+async def ask_for_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pede ao usuário para digitar o código de convite."""
+    await update.message.reply_text(
+        "🔐 Digite o código do grupo que você recebeu:",
+        reply_markup=cancel_keyboard(),
+    )
+    return AWAIT_INVITE_CODE_INPUT
+
+async def process_invite_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa o código de convite digitado pelo usuário."""
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
+        
+    codigo_convite = update.message.text.strip()
+    context.user_data['invite_code_to_accept'] = codigo_convite
+    
+    # Reutiliza a função existente para aceitar o convite
+    return await aceitar_convite(update, context)
+# ========================================
+
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mensagem de ajuda atualizada com botão de compartilhamento
     help_text = (
@@ -454,8 +476,11 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Você também pode digitar diretamente o nome de um produto para pesquisar seu preço!\n"
         "- Use o botão 👪 Compartilhar Lista para convidar outras pessoas."
     )
-    # Criar um teclado inline com o botão de compartilhar
-    keyboard = [[InlineKeyboardButton("👪 Compartilhar Lista", callback_data="compartilhar_lista")]]
+    # Criar um teclado inline com os botões de compartilhar e inserir código
+    keyboard = [
+        [InlineKeyboardButton("👪 Compartilhar Lista", callback_data="compartilhar_lista")],
+        [InlineKeyboardButton("🔐 Inserir Código", callback_data="inserir_codigo")] # Novo botão
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
@@ -466,6 +491,20 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Manter o teclado principal também
     await update.message.reply_text("...", reply_markup=main_menu_keyboard())
     return MAIN_MENU
+
+# === NOVA FUNÇÃO CALLBACK PARA O BOTÃO INLINE ===
+async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback para o botão 'Inserir Código' no teclado inline."""
+    query = update.callback_query
+    await query.answer() # Responde ao clique do botão
+    # Edita a mensagem para mostrar o prompt de digitar o código
+    await query.edit_message_text("🔐 Digite o código do grupo que você recebeu:")
+    # Como não podemos mudar o teclado facilmente aqui, vamos enviar uma nova mensagem
+    await query.message.reply_text("...", reply_markup=cancel_keyboard())
+    # E uma nova mensagem com o teclado principal
+    await query.message.reply_text("...", reply_markup=main_menu_keyboard())
+    # O estado será gerenciado pelo MessageHandler no teclado principal
+# =================================================
 
 # === NOVA FUNÇÃO: COMPARTILHAR LISTA ===
 async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1129,7 +1168,7 @@ async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_direct_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     search_term = update.message.text.strip()
     
-    menu_buttons = ["➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos", "🔍 Pesquisar Produto", "ℹ️ Ajuda", "❌ Cancelar"]
+    menu_buttons = ["➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos", "🔍 Pesquisar Produto", "🔐 Inserir Código", "ℹ️ Ajuda", "❌ Cancelar"] # Atualizado
     if search_term in menu_buttons:
         return MAIN_MENU
     
@@ -1141,6 +1180,9 @@ def build_conv_handler():
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("aceitar", aceitar_convite), # Novo comando
+            # === Adicionando o handler para o novo botão ===
+            MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
+            # =============================================
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
             MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
             MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
@@ -1150,9 +1192,12 @@ def build_conv_handler():
         ],
         states={
             MAIN_MENU: [
+                # === Adicionando o handler para o novo botão no estado MAIN_MENU ===
+                MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
+                # ==================================================================
                 MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
-                MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
+                MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
                 MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_history),
                 MessageHandler(filters.Regex("^ℹ️ Ajuda$"), show_help),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_search)
@@ -1174,6 +1219,12 @@ def build_conv_handler():
                 CommandHandler("cancelar", cancel), # Ou MessageHandler para /cancelar
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: MAIN_MENU) # Ignora outros textos
             ],
+            # === Adicionando o novo estado para o fluxo de inserção de código ===
+            AWAIT_INVITE_CODE_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_invite_code_input),
+                MessageHandler(filters.Regex("^❌ Cancelar$"), cancel),
+            ],
+            # =====================================================================
         },
         fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)],
         # Adicionar handler para callbacks (botões inline)
@@ -1220,6 +1271,9 @@ async def start_bot():
     
     # Adicionar handler específico para callbacks (botões inline)
     application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
+    # === Adicionando o handler para o callback do botão inline "Inserir Código" ===
+    application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
+    # =============================================================================
     
     await application.initialize()
     webhook_url = f"{os.environ['RENDER_EXTERNAL_URL']}/webhook"
