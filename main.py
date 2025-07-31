@@ -30,6 +30,7 @@ CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho 
 # === ESTADOS DO CONVERSATIONHANDLER ===
 # Definindo os estados de forma clara e explícita
 # Adicionando estados para o fluxo de compartilhamento
+# Corrigido para 11 estados
 MAIN_MENU, AWAIT_PRODUCT_DATA, CONFIRM_PRODUCT, AWAIT_EDIT_DELETE_CHOICE, AWAIT_EDIT_PRICE, AWAIT_DELETION_CHOICE, CONFIRM_DELETION, SEARCH_PRODUCT_INPUT, AWAIT_ENTRY_CHOICE, AWAIT_INVITE_CODE, AWAIT_INVITE_CODE_INPUT = range(11)
 
 # === LOGGING ===
@@ -176,11 +177,11 @@ async def listar_membros_do_grupo(client, grupo_id: str) -> list:
 
 # === TECLADOS ===
 def main_menu_keyboard():
-    # Adicionando o novo botão "🔐 Inserir Código"
+    # Botão "🔐 Inserir Código" REMOVIDO do menu principal
     return ReplyKeyboardMarkup([
         [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar ou Excluir")],
         [KeyboardButton("📋 Listar Produtos"), KeyboardButton("🔍 Pesquisar Produto")],
-        [KeyboardButton("🔐 Inserir Código"), KeyboardButton("ℹ️ Ajuda")], # Botão adicionado
+        [KeyboardButton("ℹ️ Ajuda")] # Botão adicionado
     ], resize_keyboard=True)
 
 def cancel_keyboard():
@@ -474,7 +475,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Para produtos com múltiplas embalagens (como '3 tubos de 90g'), descreva assim para que o sistema calcule o custo por unidade.\n"
         "- O sistema automaticamente calculará o **preço por unidade de medida** (Kg, L, ml, g, und, rolo, metro, etc.) e informará qual opção é mais econômica.\n"
         "- Você também pode digitar diretamente o nome de um produto para pesquisar seu preço!\n"
-        "- Use o botão 👪 Compartilhar Lista para convidar outras pessoas."
+        "- Use os botões abaixo para compartilhar ou acessar listas."
     )
     # Criar um teclado inline com os botões de compartilhar e inserir código
     keyboard = [
@@ -504,6 +505,7 @@ async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_
     # E uma nova mensagem com o teclado principal
     await query.message.reply_text("...", reply_markup=main_menu_keyboard())
     # O estado será gerenciado pelo MessageHandler no teclado principal
+    return AWAIT_INVITE_CODE_INPUT # Inicia o fluxo de digitação de código
 # =================================================
 
 # === NOVA FUNÇÃO: COMPARTILHAR LISTA ===
@@ -1168,7 +1170,8 @@ async def show_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_direct_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     search_term = update.message.text.strip()
     
-    menu_buttons = ["➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos", "🔍 Pesquisar Produto", "🔐 Inserir Código", "ℹ️ Ajuda", "❌ Cancelar"] # Atualizado
+    # Atualizado para refletir o menu principal correto
+    menu_buttons = ["➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos", "🔍 Pesquisar Produto", "ℹ️ Ajuda", "❌ Cancelar"] 
     if search_term in menu_buttons:
         return MAIN_MENU
     
@@ -1180,9 +1183,9 @@ def build_conv_handler():
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("aceitar", aceitar_convite), # Novo comando
-            # === Adicionando o handler para o novo botão ===
-            MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
-            # =============================================
+            # === REMOVIDO o handler para o botão do menu principal ===
+            # MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
+            # ======================================================
             MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
             MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
             MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
@@ -1192,9 +1195,9 @@ def build_conv_handler():
         ],
         states={
             MAIN_MENU: [
-                # === Adicionando o handler para o novo botão no estado MAIN_MENU ===
-                MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
-                # ==================================================================
+                # === REMOVIDO o handler para o botão do menu principal no estado MAIN_MENU ===
+                # MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
+                # ========================================================================
                 MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_product_data),
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
                 MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), edit_or_delete_product),
