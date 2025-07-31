@@ -8,14 +8,15 @@ from threading import Thread
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+# Correção: Adicionando a vírgula faltando e formatando melhor
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     ConversationHandler,
     ContextTypes,
-    filters
-    CallbackQueryHandler
+    filters, # <-- Vírgula adicionada aqui
+    CallbackQueryHandler # <-- E aqui
 )
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -405,15 +406,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Verifica se foi chamado com um código de convite
     if context.args and len(context.args) > 0:
         codigo_convite = context.args[0]
-        if codigo_convite.startswith("convite_"):
-            context.user_data['invite_code_to_accept'] = codigo_convite
-            await update.message.reply_text(
-                f"Você foi convidado para um grupo!\n"
-                f"Código do convite: `{codigo_convite}`\n"
-                f"Digite /aceitar para confirmar ou /cancelar.",
-                parse_mode="Markdown"
-            )
-            return AWAIT_INVITE_CODE # Novo estado para aceitar convite
+        # Removido o prefixo "convite_" para simplificar, usando o grupo_id diretamente
+        # if codigo_convite.startswith("convite_"): 
+        context.user_data['invite_code_to_accept'] = codigo_convite
+        await update.message.reply_text(
+            f"Você foi convidado para um grupo!\n"
+            f"Código do convite: `{codigo_convite}`\n"
+            f"Digite /aceitar para confirmar ou /cancelar.",
+            parse_mode="Markdown"
+        )
+        return AWAIT_INVITE_CODE # Novo estado para aceitar convite
     
     await update.message.reply_text(
         "🛒 *Bot de Compras Inteligente* 🛒\nEscolha uma opção ou digite o nome de um produto para pesquisar:",
@@ -479,7 +481,13 @@ async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFA
         # Gera um código de convite baseado no grupo_id existente
         # Para simplificar, vamos usar o próprio grupo_id como código
         codigo_convite = grupo_id
-        link_convite = f"https://t.me/{(await context.bot.get_me()).username}?start={codigo_convite}"
+        # Obtém o username do bot
+        bot_username = (await context.bot.get_me()).username
+        if bot_username:
+            link_convite = f"https://t.me/{bot_username}?start={codigo_convite}"
+        else:
+            # Fallback se não conseguir o username
+            link_convite = f"https://t.me?start={codigo_convite}&bot_id={context.bot.id}"
         
         # Primeira mensagem: link e texto
         await query.edit_message_text(
