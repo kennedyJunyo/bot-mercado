@@ -15,6 +15,7 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     filters
+    CallbackQueryHandler
 )
 from oauth2client.service_account import ServiceAccountCredentials
 
