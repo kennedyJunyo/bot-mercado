@@ -89,19 +89,19 @@ async def adicionar_usuario_ao_grupo(novo_user_id: int, codigo_convite: str, con
     try:
         # 1. Verificar se o codigo_convite (grupo_id) existe na tabela 'usuarios'
         response = supabase.table("usuarios").select("grupo_id").eq("grupo_id", codigo_convite).limit(1).execute()
-        if not response.data:
+        if not response.data: # <--- LINHA 102 CORRIGIDA
             return False, "❌ Código de convite inválido."
 
         grupo_id_para_adicionar = codigo_convite
 
         # 2. Verificar se o usuário já está NO MESMO grupo
         check_response = supabase.table("usuarios").select("grupo_id").eq("user_id", novo_user_id).eq("grupo_id", grupo_id_para_adicionar).execute()
-        if check_response.data:
+        if check_response.data: # <--- LINHA 110 CORRIGIDA
             return True, f"✅ Você já está no grupo '{grupo_id_para_adicionar}'."
 
         # 3. Verificar se o usuário já existe (em outro grupo)
         exists_response = supabase.table("usuarios").select("user_id").eq("user_id", novo_user_id).execute()
-        if exists_response.data:
+        if exists_response.data: # <--- LINHA 117 CORRIGIDA
             # Atualiza o grupo_id do usuário existente
             update_response = supabase.table("usuarios").update({"grupo_id": grupo_id_para_adicionar}).eq("user_id", novo_user_id).execute()
             logging.info(f"Usuário {novo_user_id} atualizado para o grupo {grupo_id_para_adicionar}. Resposta: {update_response}")
@@ -153,9 +153,12 @@ def cancel_keyboard():
 
 # === HANDLERS === (adaptados onde interagem com dados)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logging.info("Handler /start foi chamado!") # <--- Log de depuração adicionado
     user_id = update.effective_user.id
+    logging.info(f"User ID: {user_id}") # <--- Log de depuração adicionado
     # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
     grupo_id = await get_grupo_id(user_id)
+    logging.info(f"Grupo ID obtido: {grupo_id}") # <--- Log de depuração adicionado
     await update.message.reply_text(
         f"🛒 *Bot de Compras Inteligente* 🛒\n"
         f"Seu grupo compartilhado: `{grupo_id}`\n\n"
@@ -163,6 +166,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
+    logging.info("Mensagem de resposta do /start enviada!") # <--- Log de depuração adicionado
     return MAIN_MENU
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -492,9 +496,11 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 
-# === FLASK + HEALTH CHECKS ===
+# === FLASK + WEBHOOK ===
 # Mantém Flask apenas para /, /healthz e manter o Render feliz com um servidor HTTP
+# A função webhook será síncrona, mas delegará o processamento assíncrono
 app = Flask(__name__)
+application = None # O Application será inicializado globalmente
 
 @app.route("/healthz")
 def healthz():
@@ -504,29 +510,59 @@ def healthz():
 def home():
     return "🛒 Bot de Compras está no ar!", 200
 
+# >>>>> FUNÇÃO WEBHOOK CORRIGIDA PARA DELEGAR PROCESSAMENTO ASSÍNCRONO <<<<<
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    # Esta função é síncrona e NÃO usa 'async def'
+    json_data = request.get_json()
+    update = Update.de_json(json_data, application.bot)
+
+    # Em vez de 'await application.process_update(update)', que é async,
+    # usamos asyncio.run() para executar a coroutine de forma síncrona neste contexto.
+    # NOTA: Isso pode ser um gargalo se muitas atualizações chegarem simultaneamente,
+    # pois cada uma bloqueia o worker do Flask até terminar.
+    # Para produção com alta carga, webhooks puramente assíncronos (sem Flask para o webhook) são melhores.
+    try:
+        # Cria um novo loop de eventos para esta thread (se necessário)
+        # Em muitos casos, isso funciona bem dentro do contexto do worker do Flask.
+        asyncio.run(application.process_update(update))
+    except Exception as e:
+        logging.error(f"Erro ao processar atualização no webhook: {e}")
+        # Flask retornará 500 por padrão se uma exceção não tratada ocorrer
+
+    # Retorna 200 OK para o Telegram, indicando que recebemos a atualização
+    return "OK", 200
+# >>>>> FIM DA ALTERAÇÃO <<<<<
+
 # === MAIN ===
-# Modificado para usar Polling em vez de tentar gerenciar webhooks manualmente
-async def start_bot():
+# Modificado para NÃO usar polling e preparar o Application para webhooks
+async def start_bot_async_part():
+    """Parte assíncrona da inicialização do bot (handlers, etc.)"""
     global application
 
+    # Inicializa a aplicação
     application = Application.builder().token(TOKEN).build()
 
-    # Configurar handlers
+    # Configurar handlers (seu código existente para conv_handler, etc.)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             MAIN_MENU: [
+                # --- Adicione esta linha ---
+                CommandHandler("start", start), # Permite /start dentro do estado MAIN_MENU
+                # --- Até aqui ---
                 MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_for_product_data),
-                MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), lambda u, c: SEARCH_PRODUCT_INPUT),
+                MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), lambda u, c: SEARCH_PRODUCT_INPUT), # Placeholder
                 MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
-                MessageHandler(filters.Regex("^✏️ Editar/Excluir$"), lambda u, c: AWAIT_EDIT_DELETE_CHOICE),
+                MessageHandler(filters.Regex("^✏️ Editar/Excluir$"), lambda u, c: AWAIT_EDIT_DELETE_CHOICE), # Placeholder
                 MessageHandler(filters.Regex("^👪 Compartilhar Lista$"), lambda u, c: compartilhar_lista_callback(u, c)),
                 MessageHandler(filters.Regex("^🔐 Inserir Código$"), ask_for_invite_code),
-                MessageHandler(filters.COMMAND, help_command),
+                MessageHandler(filters.COMMAND, help_command), # Para /help ou outros comandos
             ],
             AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
             CONFIRM_PRODUCT: [MessageHandler(filters.Regex("^(✅ Confirmar|❌ Cancelar)$"), confirm_product)],
             AWAIT_INVITE_CODE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input)],
+            # Adicione outros estados conforme necessário
         },
         fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)]
     )
@@ -537,33 +573,46 @@ async def start_bot():
 
     # Inicializa a aplicação
     await application.initialize()
+    # Define o webhook (isto só precisa ser feito uma vez, mas fazer aqui garante)
+    # NOTA: Certifique-se de que RENDER_EXTERNAL_URL termina SEM barra '/'
+    WEBHOOK_URL = f"{os.environ['RENDER_EXTERNAL_URL']}/webhook"
+    await application.bot.set_webhook(url=WEBHOOK_URL)
+    logging.info(f"Webhook set to {WEBHOOK_URL}")
 
-    # Inicia o polling em uma task separada para não bloquear
-    async def run_polling():
-        await application.updater.start_polling()
-        logging.info("Bot iniciado com polling.")
-        # Mantém a task viva
-        while True:
-            await asyncio.sleep(3600)
+    # Inicia a aplicação (não inicia polling, pois não chamamos updater.start_polling)
+    await application.start()
+    # A aplicação está pronta para receber atualizações via webhook
 
-    # Cria e inicia a task de polling
-    polling_task = asyncio.create_task(run_polling())
 
-    # Mantém start_bot() ativa para que as tasks assíncronas continuem rodando
-    try:
-        await polling_task
-    except asyncio.CancelledError:
-        logging.info("Bot task cancelled.")
-        await application.stop()
-
-# Função para rodar o Flask em thread (mantém como está)
 def run_flask():
+    """Executa o servidor Flask."""
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# Modifica o bloco if __name__ == "__main__" 
 if __name__ == "__main__":
-    logging.info("Iniciando bot com polling via asyncio e Flask para health checks")
-    # Inicia o Flask em uma thread separada para / e /healthz
-    Thread(target=run_flask).start()
-    # Inicia o bot na thread principal (que está rodando o loop de eventos asyncio)
-    asyncio.run(start_bot())
+    # 1. Inicializa o Application de forma assíncrona
+    # Isso configura handlers e prepara o bot
+    logging.info("Inicializando Application do bot...")
+    asyncio.run(start_bot_async_part()) # Isso configura o 'application' global
+
+    # 2. Inicia o servidor Flask em uma thread separada
+    # Isso permite que o Flask escute na porta e responda a /, /healthz e /webhook
+    logging.info("Iniciando servidor Flask...")
+    flask_thread = Thread(target=run_flask)
+    flask_thread.start()
+
+    # 3. Mantém o programa principal vivo
+    # Como o Flask roda em uma thread e o bot está pronto para webhooks,
+    # podemos simplesmente manter o processo ativo.
+    # O loop abaixo é opcional, mas garante que o processo não termine.
+    try:
+        while True:
+             # Dorme por um tempo longo ou até receber um sinal de interrupção
+             asyncio.get_event_loop().run_until_complete(asyncio.sleep(3600))
+    except KeyboardInterrupt:
+        logging.info("Recebido KeyboardInterrupt. Encerrando...")
+    finally:
+        # Tenta encerrar graciosamente (opcional, pode exigir mais ajustes)
+        # asyncio.run(application.stop()) # Requer que 'application' seja acessível e stop seja async
+        pass
+
+    logging.info("Bot encerrado.")
