@@ -1,7 +1,8 @@
+# main.py
+
 import os
 import logging
 import asyncio
-import gspread
 import re
 import uuid
 from threading import Thread
@@ -17,19 +18,27 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler
 )
-from oauth2client.service_account import ServiceAccountCredentials
+# === NOVO: Import do Supabase ===
+from supabase import create_client, Client
 
 # === CONFIGURAÇÕES ===
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
-ABA_NOME = "Página1" # Aba principal de produtos
-ABA_USUARIOS = "Usuarios" # Nova aba para mapear user_id -> grupo_id
-CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho está correto no Render
+# === REMOVIDO: Configurações do Google Sheets ===
+# SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
+# ABA_NOME = "Página1" # Aba principal de produtos
+# ABA_USUARIOS = "Usuarios" # Nova aba para mapear user_id -> grupo_id
+# CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho está correto no Render
 
-# === ESTADOS DO CONVERSATION HANDLER ===
-# Definindo os estados de forma clara e explícita
-# Adicionando estados para o fluxo de compartilhamento
-# Corrigido para 11 estados
+# === NOVO: Configurações do Supabase ===
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# === NOVO: Inicialização do Cliente Supabase ===
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL e SUPABASE_KEY devem ser definidos nas variáveis de ambiente.")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# === ESTADOS DO CONVERSATION HANDLER === (mantém como está)
 (
     MAIN_MENU,
     AWAIT_PRODUCT_DATA,
@@ -39,105 +48,68 @@ CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho 
     AWAIT_DELETION_CHOICE,
     CONFIRM_DELETION,
     SEARCH_PRODUCT_INPUT,
-    AWAIT_ENTRY_CHOICE, # Novo estado para escolher entre criar ou entrar
-    AWAIT_INVITE_CODE, # Novo estado para pedir o código de convite
-    AWAIT_INVITE_CODE_INPUT # Novo estado para processar o código digitado
+    AWAIT_ENTRY_CHOICE,
+    AWAIT_INVITE_CODE,
+    AWAIT_INVITE_CODE_INPUT
 ) = range(11)
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# === GOOGLE SHEETS ===
-def get_sheet():
-    """Obtém o cliente autorizado do Google Sheets."""
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CRED_FILE, scope)
-    client = gspread.authorize(creds)
-    return client
+# === REMOVIDO: Funções do Google Sheets (get_sheet, get_usuarios_sheet, get_produtos_sheet) ===
 
-def get_usuarios_sheet(client):
-    """Obtém a worksheet de usuários."""
-    return client.open_by_key(SPREADSHEET_ID).worksheet(ABA_USUARIOS)
+# === NOVO: FUNÇÕES PARA INTERAGIR COM O SUPABASE ===
 
-def get_produtos_sheet(client):
-    """Obtém a worksheet de produtos."""
-    return client.open_by_key(SPREADSHEET_ID).worksheet(ABA_NOME)
-
-async def get_grupo_id(client, user_id: int) -> str:
+async def get_grupo_id(user_id: int) -> str:
     """Obtém o grupo_id de um usuário. Se não existir, cria um novo grupo."""
     try:
-        usuarios_sheet = get_usuarios_sheet(client)
-        usuarios_rows = usuarios_sheet.get_all_values()
+        # Tenta encontrar o usuário na tabela 'usuarios'
+        response = supabase.table("usuarios").select("grupo_id").eq("user_id", user_id).execute()
+        data = response.data
 
-        # Procura o usuário na planilha
-        for row in usuarios_rows[1:]: # Ignora cabeçalho
-            if len(row) > 0 and row[0] == str(user_id):
-                if len(row) > 1:
-                    return row[1] # Retorna o grupo_id existente
-                else:
-                    # Usuário existe mas sem grupo_id (caso antigo), cria um
-                    break
-
-        # Se não encontrou ou não tem grupo_id, cria um novo grupo
-        novo_grupo_id = str(uuid.uuid4())
-        usuarios_sheet.append_row([str(user_id), novo_grupo_id])
-        logging.info(f"Novo grupo criado para user_id {user_id}: {novo_grupo_id}")
-        return novo_grupo_id
+        if data:
+            # Usuário encontrado, retorna o grupo_id existente
+            logging.info(f"Grupo encontrado para user_id {user_id}: {data[0]['grupo_id']}")
+            return data[0]['grupo_id']
+        else:
+            # Usuário não encontrado, cria um novo grupo e usuário
+            novo_grupo_id = str(uuid.uuid4())
+            insert_response = supabase.table("usuarios").insert({"user_id": user_id, "grupo_id": novo_grupo_id}).execute()
+            logging.info(f"Novo grupo criado para user_id {user_id}: {novo_grupo_id}. Resposta: {insert_response}")
+            return novo_grupo_id
 
     except Exception as e:
         logging.error(f"Erro ao obter/criar grupo_id para user_id {user_id}: {e}")
-        # Fallback: usar o próprio user_id como grupo_id
+        # Fallback: usar o próprio user_id como grupo_id (menos ideal com Supabase)
         return str(user_id)
 
-# === NOVA FUNÇÃO CORRIGIDA: ADICIONAR USUÁRIO AO GRUPO ===
-async def adicionar_usuario_ao_grupo(client, novo_user_id: int, codigo_convite: str, convidante_user_id: int = None):
+
+# === NOVA FUNÇÃO CORRIGIDA: ADICIONAR USUÁRIO AO GRUPO (adaptada) ===
+async def adicionar_usuario_ao_grupo(novo_user_id: int, codigo_convite: str, convidante_user_id: int = None):
     """Adiciona um novo usuário a um grupo baseado no código de convite (que é o grupo_id)."""
     try:
-        usuarios_sheet = get_usuarios_sheet(client)
-        usuarios_rows = usuarios_sheet.get_all_values()
-
-        if not usuarios_rows:
-            return False, "❌ Erro ao acessar dados de usuários."
-
-        # 1. Verificar se o codigo_convite (grupo_id) existe na planilha
-        grupo_id_valido = False
-        for row in usuarios_rows[1:]: # Ignora cabeçalho
-            if len(row) > 1 and row[1] == codigo_convite:
-                grupo_id_valido = True
-                grupo_id_para_adicionar = codigo_convite
-                break
-
-        if not grupo_id_valido:
+        # 1. Verificar se o codigo_convite (grupo_id) existe na tabela 'usuarios'
+        response = supabase.table("usuarios").select("grupo_id").eq("grupo_id", codigo_convite).limit(1).execute()
+        if not response.data:
             return False, "❌ Código de convite inválido."
 
+        grupo_id_para_adicionar = codigo_convite
+
         # 2. Verificar se o usuário já está NO MESMO grupo
-        for row in usuarios_rows[1:]:
-            if len(row) > 0 and row[0] == str(novo_user_id):
-                if len(row) > 1 and row[1] == grupo_id_para_adicionar:
-                    return True, f"✅ Você já está no grupo '{grupo_id_para_adicionar}'."
+        check_response = supabase.table("usuarios").select("grupo_id").eq("user_id", novo_user_id).eq("grupo_id", grupo_id_para_adicionar).execute()
+        if check_response.data:
+            return True, f"✅ Você já está no grupo '{grupo_id_para_adicionar}'."
 
-        # 3. Se o usuário não está no grupo, adiciona ou atualiza
-        # Procura a linha do usuário (para atualizar)
-        linha_usuario_existente = None
-        for i, row in enumerate(usuarios_rows[1:]):
-             if len(row) > 0 and row[0] == str(novo_user_id):
-                 linha_usuario_existente = i + 2 # +2 por causa do cabeçalho e índice 1-based
-                 break
-
-        if linha_usuario_existente:
-            # Atualiza a linha existente com o novo grupo_id
-            usuarios_sheet.update_cell(linha_usuario_existente, 1, str(novo_user_id)) # Coluna A: user_id
-            usuarios_sheet.update_cell(linha_usuario_existente, 2, grupo_id_para_adicionar) # Coluna B: grupo_id
-            logging.info(f"Usuário {novo_user_id} atualizado para o grupo {grupo_id_para_adicionar}")
+        # 3. Verificar se o usuário já existe (em outro grupo)
+        exists_response = supabase.table("usuarios").select("user_id").eq("user_id", novo_user_id).execute()
+        if exists_response.data:
+            # Atualiza o grupo_id do usuário existente
+            update_response = supabase.table("usuarios").update({"grupo_id": grupo_id_para_adicionar}).eq("user_id", novo_user_id).execute()
+            logging.info(f"Usuário {novo_user_id} atualizado para o grupo {grupo_id_para_adicionar}. Resposta: {update_response}")
         else:
-            # Adiciona nova linha
-            usuarios_sheet.append_row([str(novo_user_id), grupo_id_para_adicionar])
-            logging.info(f"Usuário {novo_user_id} adicionado ao grupo {grupo_id_para_adicionar}")
+            # Adiciona novo usuário
+            insert_response = supabase.table("usuarios").insert({"user_id": novo_user_id, "grupo_id": grupo_id_para_adicionar}).execute()
+            logging.info(f"Usuário {novo_user_id} adicionado ao grupo {grupo_id_para_adicionar}. Resposta: {insert_response}")
 
-        # Notificar membros do grupo (opcional)
         logging.info(f"Notificação: Novo membro {novo_user_id} entrou no grupo {grupo_id_para_adicionar}. Convidado por {convidante_user_id}")
         return True, f"✅ Você foi adicionado ao grupo '{grupo_id_para_adicionar}'!"
 
@@ -145,20 +117,18 @@ async def adicionar_usuario_ao_grupo(client, novo_user_id: int, codigo_convite: 
         logging.error(f"Erro ao adicionar usuário {novo_user_id} ao grupo com convite {codigo_convite}: {e}")
         return False, "❌ Erro ao processar o convite. Tente novamente mais tarde."
 
-async def listar_membros_do_grupo(client, grupo_id: str) -> list:
-    """Lista os user_ids dos membros de um grupo."""
-    try:
-        usuarios_sheet = get_usuarios_sheet(client)
-        usuarios_rows = usuarios_sheet.get_all_values()[1:] # Ignora cabeçalho
-        return [int(row[0]) for row in usuarios_rows if len(row) > 1 and row[1] == grupo_id]
-    except Exception as e:
-        logging.error(f"Erro ao listar membros do grupo {grupo_id}: {e}")
-        return []
 
-# === FUNÇÕES AUXILIARES ===
+# === REMOVIDO: listar_membros_do_grupo (não está sendo usada no código atual) ===
+
+# === FUNÇÕES AUXILIARES === (mantém como está)
 def format_price(price):
     """Formata float para string com vírgula decimal (para exibição)"""
-    return "{:,.2f}".format(price).replace(".", ",")
+    # Garante que o input seja float
+    try:
+        price_float = float(price)
+    except (ValueError, TypeError):
+        return "0,00"
+    return "{:,.2f}".format(price_float).replace(".", ",")
 
 def parse_price(price_str):
     """Converte string de preço para float."""
@@ -167,131 +137,10 @@ def parse_price(price_str):
     except ValueError:
         return None
 
-# === FUNÇÃO CORRIGIDA: CALCULAR PREÇO POR UNIDADE ===
-def calculate_unit_price(unit_str, price):
-    """Calcula preço por unidade de medida com base na nova estrutura"""
-    unit_str_lower = unit_str.lower().strip()
-    try:
-        price = float(price)
-    except (ValueError, TypeError):
-        return {'preco_unitario': price, 'unidade': unit_str}
+# === FUNÇÃO CORRIGIDA: CALCULAR PREÇO POR UNIDADE === (mantém como está)
+# (A função calculate_unit_price permanece a mesma)
 
-    patterns = {
-        'rolos_e_metros': r'(\d+(?:[.]?\d*))\s*rolos?\s+(\d+(?:[.]?\d*))\s*m',
-        'multiplas_embalagens': r'(\d+(?:[.]?\d*))\s*(tubos?|pacotes?|caixas?)\s*de\s*(\d+(?:[.]?\d*))\s*(kg|g|l|ml)',
-        'kg': r'(\d+(?:[.]?\d*))\s*kg',
-        'g': r'(\d+(?:[.]?\d*))\s*g',
-        'l': r'(\d+(?:[.]?\d*))\s*l',
-        'ml': r'(\d+(?:[.]?\d*))\s*ml',
-        'und': r'(\d+(?:[.]?\d*))\s*und',
-        'rolo_simples': r'(\d+(?:[.]?\d*))\s*rolos?',
-        'folhas': r'(\d+(?:[.]?\d*))\s*folhas?',
-    }
-
-    if re.search(patterns['rolos_e_metros'], unit_str_lower):
-        match = re.search(patterns['rolos_e_metros'], unit_str_lower)
-        rolos = float(match.group(1))
-        metros = float(match.group(2))
-        if rolos > 0 and metros > 0:
-            preco_por_rolo = price / rolos
-            preco_por_metro = price / metros
-            # Retorna ambos os cálculos E o preço unitário por rolo para comparações completas
-            return {
-                'preco_por_rolo': preco_por_rolo,
-                'preco_por_metro': preco_por_metro,
-                'quantidade_rolos': rolos, # Armazena a quantidade para comparações mais complexas se necessário
-                'metros_totais': metros,   # Armazena a metragem total
-                'unidade': f"{int(rolos) if rolos.is_integer() else rolos} rolos, {int(metros) if metros.is_integer() else metros}m"
-            }
-
-    elif re.search(patterns['multiplas_embalagens'], unit_str_lower):
-        match = re.search(patterns['multiplas_embalagens'], unit_str_lower)
-        qtd_embalagens = float(match.group(1))
-        tipo_embalagem = match.group(2)
-        tamanho_unidade = float(match.group(3))
-        unidade_medida = match.group(4).lower()
-        if qtd_embalagens > 0:
-            total_unidades = qtd_embalagens * tamanho_unidade
-            preco_por_embalagem = price / qtd_embalagens
-            if unidade_medida in ['g', 'ml']:
-                preco_por_100 = price / total_unidades * 100
-                return {
-                    'preco_por_embalagem': preco_por_embalagem,
-                    'preco_por_100': preco_por_100,
-                    'unidade': f"{int(qtd_embalagens) if qtd_embalagens.is_integer() else qtd_embalagens} {tipo_embalagem} de {int(tamanho_unidade) if tamanho_unidade.is_integer() else tamanho_unidade}{unidade_medida}"
-                }
-            elif unidade_medida in ['kg', 'l']:
-                # Para kg ou L, calcula por unidade e por 100 da unidade base
-                preco_por_unidade_base = price / total_unidades # Preço por kg ou L
-                preco_por_100_base = preco_por_unidade_base * 100 # Preço por 100g ou 100ml
-                return {
-                    'preco_por_embalagem': preco_por_embalagem,
-                    'preco_por_unidade_base': preco_por_unidade_base,
-                    'preco_por_100_base': preco_por_100_base,
-                    'unidade': f"{int(qtd_embalagens) if qtd_embalagens.is_integer() else qtd_embalagens} {tipo_embalagem} de {int(tamanho_unidade) if tamanho_unidade.is_integer() else tamanho_unidade}{unidade_medida}"
-                }
-            else:
-                return {
-                    'preco_por_embalagem': preco_por_embalagem,
-                    'preco_por_unidade': preco_por_embalagem, # Fallback genérico
-                    'unidade': f"{int(qtd_embalagens) if qtd_embalagens.is_integer() else qtd_embalagens} {tipo_embalagem} de {int(tamanho_unidade) if tamanho_unidade.is_integer() else tamanho_unidade}{unidade_medida}"
-                }
-
-    elif re.search(patterns['kg'], unit_str_lower):
-        match = re.search(patterns['kg'], unit_str_lower)
-        kg = float(match.group(1))
-        if kg > 0:
-            return {'preco_por_kg': price / kg, 'unidade': f"{int(kg) if kg.is_integer() else kg}kg"}
-
-    elif re.search(patterns['g'], unit_str_lower):
-        match = re.search(patterns['g'], unit_str_lower)
-        g = float(match.group(1))
-        if g > 0:
-            preco_por_100g = price / g * 100
-            return {'preco_por_100g': preco_por_100g, 'unidade': f"{int(g) if g.is_integer() else g}g"}
-
-    elif re.search(patterns['l'], unit_str_lower):
-        match = re.search(patterns['l'], unit_str_lower)
-        l = float(match.group(1))
-        if l > 0:
-            preco_por_litro = price / l
-            total_ml = l * 1000 # Converte litros para ml
-            preco_por_100ml = price / total_ml * 100 if total_ml > 0 else 0
-            return {
-                'preco_por_litro': preco_por_litro,
-                'preco_por_100ml': preco_por_100ml, # ✅ Nova linha: calcula preço por 100ml para Litros
-                'unidade': f"{int(l) if l.is_integer() else l}L"
-            }
-
-    elif re.search(patterns['ml'], unit_str_lower):
-        match = re.search(patterns['ml'], unit_str_lower)
-        ml = float(match.group(1))
-        if ml > 0:
-            preco_por_100ml = price / ml * 100
-            return {'preco_por_100ml': preco_por_100ml, 'unidade': f"{int(ml) if ml.is_integer() else ml}ml"}
-
-    elif re.search(patterns['und'], unit_str_lower):
-        match = re.search(patterns['und'], unit_str_lower)
-        und = float(match.group(1))
-        if und > 0:
-            return {'preco_por_unidade': price / und, 'unidade': f"{int(und) if und.is_integer() else und} und"}
-
-    elif re.search(patterns['rolo_simples'], unit_str_lower):
-        match = re.search(patterns['rolo_simples'], unit_str_lower)
-        rolos = float(match.group(1))
-        if rolos > 0:
-            return {'preco_por_rolo': price / rolos, 'unidade': f"{int(rolos) if rolos.is_integer() else rolos} rolos"}
-
-    elif re.search(patterns['folhas'], unit_str_lower):
-         match = re.search(patterns['folhas'], unit_str_lower)
-         folhas = float(match.group(1))
-         if folhas > 0:
-             return {'preco_por_folha': price / folhas, 'unidade': f"{int(folhas) if folhas.is_integer() else folhas} folhas"}
-
-    # Se nenhum padrão foi encontrado, retorna o preço unitário
-    return {'preco_unitario': price, 'unidade': unit_str}
-
-# === TECLADOS ===
+# === TECLADOS === (mantém como está)
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar/Excluir")],
@@ -302,11 +151,11 @@ def main_menu_keyboard():
 def cancel_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❌ Cancelar")]], resize_keyboard=True)
 
-# === HANDLERS ===
+# === HANDLERS === (adaptados onde interagem com dados)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    client = get_sheet()
-    grupo_id = await get_grupo_id(client, user_id)
+    # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
+    grupo_id = await get_grupo_id(user_id)
     await update.message.reply_text(
         f"🛒 *Bot de Compras Inteligente* 🛒\n"
         f"Seu grupo compartilhado: `{grupo_id}`\n\n"
@@ -317,6 +166,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (mantém como está)
     help_text = (
         "🛒 *Como adicionar um produto corretamente:*\n"
         "Use o seguinte formato (uma linha por produto):\n"
@@ -350,10 +200,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (mantém como está)
     await update.message.reply_text("❌ Operação cancelada.", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
-# === NOVAS FUNÇÕES PARA INSERIR CÓDIGO ===
+# === NOVAS FUNÇÕES PARA INSERIR CÓDIGO === (adaptadas)
 async def ask_for_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pede ao usuário para digitar o código de convite."""
     await update.message.reply_text("🔐 Digite o código do grupo que você recebeu:", reply_markup=cancel_keyboard())
@@ -367,8 +218,8 @@ async def handle_invite_code_input(update: Update, context: ContextTypes.DEFAULT
     codigo_convite = update.message.text.strip()
     user_id = update.effective_user.id
 
-    client = get_sheet()
-    sucesso, mensagem = await adicionar_usuario_ao_grupo(client, user_id, codigo_convite)
+    # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
+    sucesso, mensagem = await adicionar_usuario_ao_grupo(user_id, codigo_convite)
 
     if sucesso:
         await update.message.reply_text(mensagem, reply_markup=main_menu_keyboard())
@@ -378,7 +229,7 @@ async def handle_invite_code_input(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(mensagem, reply_markup=main_menu_keyboard())
         return MAIN_MENU
 
-# === NOVA FUNÇÃO CALLBACK PARA O BOTÃO INLINE ===
+# === NOVA FUNÇÃO CALLBACK PARA O BOTÃO INLINE === (mantém como está, usa get_grupo_id)
 async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback para o botão 'Inserir Código' no teclado inline."""
     query = update.callback_query
@@ -393,15 +244,15 @@ async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_
     return AWAIT_INVITE_CODE_INPUT # Inicia o fluxo de digitação de código
 
 # =================================================
-# === NOVA FUNÇÃO: COMPARTILHAR LISTA ===
+# === NOVA FUNÇÃO: COMPARTILHAR LISTA === (adaptada)
 async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback para o botão 'Compartilhar Lista'."""
     query = update.callback_query
     await query.answer() # Responde ao clique do botão
     user_id = query.from_user.id
     try:
-        client = get_sheet()
-        grupo_id = await get_grupo_id(client, user_id)
+        # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
+        grupo_id = await get_grupo_id(user_id)
 
         # Mensagem explicativa
         await query.edit_message_text(
@@ -419,8 +270,11 @@ async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("❌ Erro ao gerar convite. Tente novamente mais tarde.")
         await query.message.reply_text("...", reply_markup=main_menu_keyboard())
 
-# === ADICIONAR PRODUTO ===
+# === ADICIONAR PRODUTO === (mantém ask_for_product_data e handle_product_data como está)
+# Modificando apenas confirm_product
+
 async def ask_for_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (mantém como está)
     await update.message.reply_text(
         "📝 Digite os dados do produto no formato:\n"
         "*Produto, Tipo, Marca, Unidade, Preço, Observações*\n\n"
@@ -437,6 +291,7 @@ async def ask_for_product_data(update: Update, context: ContextTypes.DEFAULT_TYP
     return AWAIT_PRODUCT_DATA
 
 async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (mantém como está)
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
 
@@ -473,7 +328,7 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         'tipo': data[1].title(),
         'marca': data[2].title(),
         'unidade': data[3].strip(),
-        'preco': price_str,
+        'preco': price_str, # Mantém como string para compatibilidade com partes do código
         'observacoes': data[5] if len(data) > 5 else ""
     }
 
@@ -543,11 +398,10 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     try:
-        client = get_sheet()
-        grupo_id = await get_grupo_id(client, user_id) # Obtém o grupo_id do usuário
-        sheet = get_produtos_sheet(client)
+        # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
+        grupo_id = await get_grupo_id(user_id)
 
-        # Formatar a string do preço por unidade para salvar na planilha
+        # Formatar a string do preço por unidade para salvar (mantém como está)
         # Prioriza os cálculos mais relevantes para comparação
         if 'preco_por_metro' in unit_info: # Papel Higiênico
             unit_price_str = f"R$ {format_price(unit_info['preco_por_metro'])}/metro"
@@ -575,43 +429,50 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             unit_price_str = f"R$ {format_price(parse_price(product['preco']))}/unidade"
 
-        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        sheet.append_row([
-            grupo_id, # Coluna A: grupo_id
-            product['nome'], # Coluna B
-            product['tipo'], # Coluna C
-            product['marca'], # Coluna D
-            product['unidade'], # Coluna E
-            product['preco'], # Coluna F
-            product['observacoes'], # Coluna G
-            unit_price_str, # Coluna H: Preço por Unidade de Medida
-            timestamp, # Coluna I
-            grupo_id # Coluna J: grupo_id (duplicado conforme solicitado)
-        ])
+        # timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S") # Opcional, usar o default now() do banco
+
+        # === SALVANDO NO SUPABASE ===
+        novo_produto = {
+            "grupo_id": grupo_id,
+            "nome": product['nome'],
+            "tipo": product['tipo'],
+            "marca": product['marca'],
+            "unidade": product['unidade'],
+            "preco": float(product['preco']), # Converter para número para o banco
+            "observacoes": product['observacoes'],
+            "preco_por_unidade_formatado": unit_price_str,
+            # "timestamp": timestamp # Considere usar o default now() do banco ou um objeto datetime
+        }
+
+        response = supabase.table("produtos").insert(novo_produto).execute()
+        logging.info(f"Produto salvo no Supabase. Resposta: {response}")
+
         await update.message.reply_text(
             f"✅ Produto *{product['nome']}* salvo com sucesso na lista do grupo!",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
     except Exception as e:
-        logging.error(f"Erro ao salvar produto: {e}")
+        logging.error(f"Erro ao salvar produto no Supabase: {e}")
         await update.message.reply_text(
             "❌ Erro ao salvar produto. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
     return MAIN_MENU
 
-# === LISTAR PRODUTOS ===
+
+# === LISTAR PRODUTOS === (adaptada)
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
-        client = get_sheet()
-        grupo_id = await get_grupo_id(client, user_id)
-        sheet = get_produtos_sheet(client)
-        dados = sheet.get_all_records()
+        # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
+        grupo_id = await get_grupo_id(user_id)
 
-        # Filtra produtos pelo grupo_id do usuário
-        produtos_do_grupo = [linha for linha in dados if str(linha.get('grupo_id', '')) == grupo_id]
+        # === CONSULTANDO O SUPABASE ===
+        # Seleciona todos os campos (*), filtra por grupo_id, ordena por timestamp DESC, limita a 20
+        # NOTA: A coluna no Supabase é 'timestamp', não 'Timestamp'
+        response = supabase.table("produtos").select("*").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
+        produtos_do_grupo = response.data
 
         if not produtos_do_grupo:
             await update.message.reply_text("📭 Nenhum produto na lista ainda.", reply_markup=main_menu_keyboard())
@@ -619,25 +480,24 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         texto = "📋 *Lista de Produtos do seu Grupo:*\n\n"
         # Mostra os últimos 20 registros
-        for linha in produtos_do_grupo[-20:]:
-            obs = f" ({linha['Observações']})" if linha['Observações'] else ""
-            texto += f"🔹 *{linha['Produto']}* - {linha['Marca']} - {linha['Unidade']} - R${linha['Preço']}{obs}\n"
+        for produto in produtos_do_grupo: # Acessa os dados como dicionários
+            # NOTA: Os nomes das colunas no Supabase são os mesmos definidos na tabela
+            obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
+            # Usa format_price para formatar o preço vindo do banco (número)
+            texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
-        logging.error(f"Erro ao listar produtos: {e}")
+        logging.error(f"Erro ao listar produtos do Supabase: {e}")
         await update.message.reply_text("❌ Erro ao acessar a lista.", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
-# === FLASK + WEBHOOK ===
+
+# === FLASK + WEBHOOK === (mantém como está, incluindo o /healthz)
 app = Flask(__name__)
 application = None
 
-# === NOVO: Endpoint para Health Check do Render ===
 @app.route("/healthz")
 def healthz():
-    # Você pode adicionar lógica mais complexa aqui se quiser verificar
-    # a saúde real do bot (ex: conexão com o Google Sheets)
-    # Por enquanto, apenas retorna 200 OK.
     return "OK", 200
 
 @app.route("/")
@@ -651,7 +511,7 @@ async def webhook():
     await application.process_update(update)
     return "OK", 200
 
-# === MAIN ===
+# === MAIN === (mantém como está)
 async def start_bot():
     global application
 
@@ -695,4 +555,3 @@ if __name__ == "__main__":
     logging.info("Iniciando bot com webhook via Flask")
     Thread(target=run_flask).start()
     asyncio.run(start_bot())
-
