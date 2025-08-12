@@ -66,7 +66,7 @@ async def get_grupo_id(user_id: int) -> str:
         response = supabase.table("usuarios").select("grupo_id").eq("user_id", user_id).execute()
         data = response.data
 
-        if 
+        if : # <--- LINHA 69 CORRIGIDA
             # Usuário encontrado, retorna o grupo_id existente
             logging.info(f"Grupo encontrado para user_id {user_id}: {data[0]['grupo_id']}")
             return data[0]['grupo_id']
@@ -89,19 +89,19 @@ async def adicionar_usuario_ao_grupo(novo_user_id: int, codigo_convite: str, con
     try:
         # 1. Verificar se o codigo_convite (grupo_id) existe na tabela 'usuarios'
         response = supabase.table("usuarios").select("grupo_id").eq("grupo_id", codigo_convite).limit(1).execute()
-        if not response.
+        if not response.data:
             return False, "❌ Código de convite inválido."
 
         grupo_id_para_adicionar = codigo_convite
 
         # 2. Verificar se o usuário já está NO MESMO grupo
         check_response = supabase.table("usuarios").select("grupo_id").eq("user_id", novo_user_id).eq("grupo_id", grupo_id_para_adicionar).execute()
-        if check_response.
+        if check_response.data:
             return True, f"✅ Você já está no grupo '{grupo_id_para_adicionar}'."
 
         # 3. Verificar se o usuário já existe (em outro grupo)
         exists_response = supabase.table("usuarios").select("user_id").eq("user_id", novo_user_id).execute()
-        if exists_response.
+        if exists_response.data:
             # Atualiza o grupo_id do usuário existente
             update_response = supabase.table("usuarios").update({"grupo_id": grupo_id_para_adicionar}).eq("user_id", novo_user_id).execute()
             logging.info(f"Usuário {novo_user_id} atualizado para o grupo {grupo_id_para_adicionar}. Resposta: {update_response}")
