@@ -24,10 +24,6 @@ from supabase import create_client, Client
 # === CONFIGURAÇÕES ===
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 # === REMOVIDO: Configurações do Google Sheets ===
-# SPREADSHEET_ID = "1ShIhn1IQj8txSUshTJh_ypmzoyvIO40HLNi1ZN28rIo"
-# ABA_NOME = "Página1" # Aba principal de produtos
-# ABA_USUARIOS = "Usuarios" # Nova aba para mapear user_id -> grupo_id
-# CRED_FILE = "/etc/secrets/credentials.json" # Certifique-se de que este caminho está correto no Render
 
 # === NOVO: Configurações do Supabase ===
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -38,7 +34,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL e SUPABASE_KEY devem ser definidos nas variáveis de ambiente.")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# === ESTADOS DO CONVERSATION HANDLER === (mantém como está)
+# === ESTADOS DO CONVERSATION HANDLER ===
 (
     MAIN_MENU,
     AWAIT_PRODUCT_DATA,
@@ -54,8 +50,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ) = range(11)
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-
-# === REMOVIDO: Funções do Google Sheets (get_sheet, get_usuarios_sheet, get_produtos_sheet) ===
 
 # === NOVO: FUNÇÕES PARA INTERAGIR COM O SUPABASE ===
 
@@ -118,9 +112,7 @@ async def adicionar_usuario_ao_grupo(novo_user_id: int, codigo_convite: str, con
         return False, "❌ Erro ao processar o convite. Tente novamente mais tarde."
 
 
-# === REMOVIDO: listar_membros_do_grupo (não está sendo usada no código atual) ===
-
-# === FUNÇÕES AUXILIARES === (mantém como está)
+# === FUNÇÕES AUXILIARES ===
 def format_price(price):
     """Formata float para string com vírgula decimal (para exibição)"""
     # Garante que o input seja float
@@ -137,10 +129,10 @@ def parse_price(price_str):
     except ValueError:
         return None
 
-# === FUNÇÃO CORRIGIDA: CALCULAR PREÇO POR UNIDADE === (mantém como está)
+# === FUNÇÃO CORRIGIDA: CALCULAR PREÇO POR UNIDADE ===
 # (A função calculate_unit_price permanece a mesma)
 
-# === TECLADOS === (mantém como está)
+# === TECLADOS ===
 def main_menu_keyboard():
     return ReplyKeyboardMarkup([
         [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar/Excluir")],
@@ -151,14 +143,14 @@ def main_menu_keyboard():
 def cancel_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❌ Cancelar")]], resize_keyboard=True)
 
-# === HANDLERS === (adaptados onde interagem com dados)
+# === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logging.info("Handler /start foi chamado!") # <--- Log de depuração adicionado
+    logging.info("Handler /start foi chamado!")
     user_id = update.effective_user.id
-    logging.info(f"User ID: {user_id}") # <--- Log de depuração adicionado
+    logging.info(f"User ID: {user_id}")
     # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
     grupo_id = await get_grupo_id(user_id)
-    logging.info(f"Grupo ID obtido: {grupo_id}") # <--- Log de depuração adicionado
+    logging.info(f"Grupo ID obtido: {grupo_id}")
     await update.message.reply_text(
         f"🛒 *Bot de Compras Inteligente* 🛒\n"
         f"Seu grupo compartilhado: `{grupo_id}`\n\n"
@@ -166,7 +158,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
-    logging.info("Mensagem de resposta do /start enviada!") # <--- Log de depuração adicionado
+    logging.info("Mensagem de resposta do /start enviada!")
     return MAIN_MENU
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,7 +200,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Operação cancelada.", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
-# === NOVAS FUNÇÕES PARA INSERIR CÓDIGO === (adaptadas)
+# === NOVAS FUNÇÕES PARA INSERIR CÓDIGO ===
 async def ask_for_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Pede ao usuário para digitar o código de convite."""
     await update.message.reply_text("🔐 Digite o código do grupo que você recebeu:", reply_markup=cancel_keyboard())
@@ -233,7 +225,7 @@ async def handle_invite_code_input(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(mensagem, reply_markup=main_menu_keyboard())
         return MAIN_MENU
 
-# === NOVA FUNÇÃO CALLBACK PARA O BOTÃO INLINE === (mantém como está, usa get_grupo_id)
+# === NOVA FUNÇÃO CALLBACK PARA O BOTÃO INLINE ===
 async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback para o botão 'Inserir Código' no teclado inline."""
     query = update.callback_query
@@ -248,7 +240,7 @@ async def inserir_codigo_callback(update: Update, context: ContextTypes.DEFAULT_
     return AWAIT_INVITE_CODE_INPUT # Inicia o fluxo de digitação de código
 
 # =================================================
-# === NOVA FUNÇÃO: COMPARTILHAR LISTA === (adaptada)
+# === NOVA FUNÇÃO: COMPARTILHAR LISTA ===
 async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback para o botão 'Compartilhar Lista'."""
     query = update.callback_query
@@ -274,9 +266,7 @@ async def compartilhar_lista_callback(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("❌ Erro ao gerar convite. Tente novamente mais tarde.")
         await query.message.reply_text("...", reply_markup=main_menu_keyboard())
 
-# === ADICIONAR PRODUTO === (mantém ask_for_product_data e handle_product_data como está)
-# Modificando apenas confirm_product
-
+# === ADICIONAR PRODUTO ===
 async def ask_for_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ... (mantém como está)
     await update.message.reply_text(
@@ -433,8 +423,6 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             unit_price_str = f"R$ {format_price(parse_price(product['preco']))}/unidade"
 
-        # timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S") # Opcional, usar o default now() do banco
-
         # === SALVANDO NO SUPABASE ===
         novo_produto = {
             "grupo_id": grupo_id,
@@ -465,7 +453,7 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 
-# === LISTAR PRODUTOS === (adaptada)
+# === LISTAR PRODUTOS ===
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
@@ -474,7 +462,6 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # === CONSULTANDO O SUPABASE ===
         # Seleciona todos os campos (*), filtra por grupo_id, ordena por timestamp DESC, limita a 20
-        # NOTA: A coluna no Supabase é 'timestamp', não 'Timestamp'
         response = supabase.table("produtos").select("*").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
         produtos_do_grupo = response.data
 
@@ -485,7 +472,6 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto = "📋 *Lista de Produtos do seu Grupo:*\n\n"
         # Mostra os últimos 20 registros
         for produto in produtos_do_grupo: # Acessa os dados como dicionários
-            # NOTA: Os nomes das colunas no Supabase são os mesmos definidos na tabela
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
             # Usa format_price para formatar o preço vindo do banco (número)
             texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
@@ -498,9 +484,9 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === FLASK + WEBHOOK ===
 # Mantém Flask apenas para /, /healthz e manter o Render feliz com um servidor HTTP
-# A função webhook será síncrona, mas delegará o processamento assíncrono
 app = Flask(__name__)
-application = None # O Application será inicializado globalmente
+# A instância do Application será criada e configurada no start_bot
+bot_application = None
 
 @app.route("/healthz")
 def healthz():
@@ -510,38 +496,28 @@ def healthz():
 def home():
     return "🛒 Bot de Compras está no ar!", 200
 
-# >>>>> FUNÇÃO WEBHOOK CORRIGIDA PARA DELEGAR PROCESSAMENTO ASSÍNCRONO <<<<<
+# >>>>> FUNÇÃO WEBHOOK SIMPLIFICADA <<<<<
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # Esta função é síncrona e NÃO usa 'async def'
+    global bot_application
     json_data = request.get_json()
-    update = Update.de_json(json_data, application.bot)
-
-    # Em vez de 'await application.process_update(update)', que é async,
-    # usamos asyncio.run() para executar a coroutine de forma síncrona neste contexto.
-    # NOTA: Isso pode ser um gargalo se muitas atualizações chegarem simultaneamente,
-    # pois cada uma bloqueia o worker do Flask até terminar.
-    # Para produção com alta carga, webhooks puramente assíncronos (sem Flask para o webhook) são melhores.
-    try:
-        # Cria um novo loop de eventos para esta thread (se necessário)
-        # Em muitos casos, isso funciona bem dentro do contexto do worker do Flask.
-        asyncio.run(application.process_update(update))
-    except Exception as e:
-        logging.error(f"Erro ao processar atualização no webhook: {e}")
-        # Flask retornará 500 por padrão se uma exceção não tratada ocorrer
-
-    # Retorna 200 OK para o Telegram, indicando que recebemos a atualização
+    update = Update.de_json(json_data, bot_application.bot)
+    
+    # Agendar o processamento da atualização no loop de eventos principal
+    # Isso é thread-safe e apropriado para ser chamado de dentro de uma requisição Flask
+    asyncio.create_task(bot_application.process_update(update))
+    
+    # Retorna 200 OK imediatamente para o Telegram
     return "OK", 200
 # >>>>> FIM DA ALTERAÇÃO <<<<<
 
-# === MAIN ===
-# Modificado para NÃO usar polling e preparar o Application para webhooks
-async def start_bot_async_part():
-    """Parte assíncrona da inicialização do bot (handlers, etc.)"""
-    global application
 
-    # Inicializa a aplicação
-    application = Application.builder().token(TOKEN).build()
+# === MAIN ===
+# Função para configurar e iniciar o bot (parte assíncrona)
+async def start_bot():
+    global bot_application
+
+    bot_application = Application.builder().token(TOKEN).build()
 
     # Configurar handlers (seu código existente para conv_handler, etc.)
     conv_handler = ConversationHandler(
@@ -567,52 +543,49 @@ async def start_bot_async_part():
         fallbacks=[MessageHandler(filters.Regex("^❌ Cancelar$"), cancel)]
     )
 
-    application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
-    application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
+    bot_application.add_handler(conv_handler)
+    bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
+    bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
 
-    # Inicializa a aplicação
-    await application.initialize()
-    # Define o webhook (isto só precisa ser feito uma vez, mas fazer aqui garante)
-    # NOTA: Certifique-se de que RENDER_EXTERNAL_URL termina SEM barra '/'
+    await bot_application.initialize()
+    # Configura o webhook usando o próprio Application
     WEBHOOK_URL = f"{os.environ['RENDER_EXTERNAL_URL']}/webhook"
-    await application.bot.set_webhook(url=WEBHOOK_URL)
+    await bot_application.bot.set_webhook(url=WEBHOOK_URL)
     logging.info(f"Webhook set to {WEBHOOK_URL}")
+    await bot_application.start()
+    logging.info("Application started")
 
-    # Inicia a aplicação (não inicia polling, pois não chamamos updater.start_polling)
-    await application.start()
-    # A aplicação está pronta para receber atualizações via webhook
-
-
+# Função para rodar o Flask em thread separada
 def run_flask():
-    """Executa o servidor Flask."""
+    # Flask escuta na porta especificada pelo Render
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
+# >>>>> BLOCO PRINCIPAL REESCRITO PARA PYTHON 3.13.4 <<<<<
 if __name__ == "__main__":
-    # 1. Inicializa o Application de forma assíncrona
-    # Isso configura handlers e prepara o bot
-    logging.info("Inicializando Application do bot...")
-    asyncio.run(start_bot_async_part()) # Isso configura o 'application' global
+    logging.info("Iniciando bot com webhook via Flask e Python 3.13.4")
 
-    # 2. Inicia o servidor Flask em uma thread separada
-    # Isso permite que o Flask escute na porta e responda a /, /healthz e /webhook
-    logging.info("Iniciando servidor Flask...")
+    # 1. Inicia o servidor Flask em uma thread separada
+    # Isso libera a thread principal para rodar o loop de eventos asyncio
     flask_thread = Thread(target=run_flask)
     flask_thread.start()
+    logging.info("Servidor Flask iniciado em thread separada.")
 
-    # 3. Mantém o programa principal vivo
-    # Como o Flask roda em uma thread e o bot está pronto para webhooks,
-    # podemos simplesmente manter o processo ativo.
-    # O loop abaixo é opcional, mas garante que o processo não termine.
+    # 2. Executa a lógica assíncrona do bot na thread principal
+    # asyncio.run() gerencia o loop de eventos para nós
     try:
-        while True:
-             # Dorme por um tempo longo ou até receber um sinal de interrupção
-             asyncio.get_event_loop().run_until_complete(asyncio.sleep(3600))
+        asyncio.run(start_bot())
+        # O código abaixo de asyncio.run só executa se start_bot() retornar
+        # ou lançar uma exceção não tratada dentro do loop.
+        logging.info("Bot encerrado normalmente.")
     except KeyboardInterrupt:
         logging.info("Recebido KeyboardInterrupt. Encerrando...")
+    except Exception as e:
+        logging.error(f"Erro fatal no bot: {e}", exc_info=True)
     finally:
-        # Tenta encerrar graciosamente (opcional, pode exigir mais ajustes)
-        # asyncio.run(application.stop()) # Requer que 'application' seja acessível e stop seja async
-        pass
-
-    logging.info("Bot encerrado.")
+        # O loop de eventos criado por asyncio.run() é automaticamente fechado aqui
+        logging.info("Loop de eventos encerrado.")
+        
+    # A thread do Flask continuará rodando até o processo ser encerrado pelo Render
+    # Se você quiser garantir que ela também seja encerrada, pode usar técnicas de sinalização,
+    # mas para o Render, encerrar o processo principal (este) geralmente é suficiente.
+# >>>>> FIM DO BLOCO PRINCIPAL <<<<<
