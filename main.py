@@ -632,6 +632,14 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = Flask(__name__)
 application = None
 
+# === NOVO: Endpoint para Health Check do Render ===
+@app.route("/healthz")
+def healthz():
+    # Você pode adicionar lógica mais complexa aqui se quiser verificar
+    # a saúde real do bot (ex: conexão com o Google Sheets)
+    # Por enquanto, apenas retorna 200 OK.
+    return "OK", 200
+
 @app.route("/")
 def home():
     return "🛒 Bot de Compras está no ar!", 200
@@ -687,3 +695,4 @@ if __name__ == "__main__":
     logging.info("Iniciando bot com webhook via Flask")
     Thread(target=run_flask).start()
     asyncio.run(start_bot())
+
