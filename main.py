@@ -66,7 +66,7 @@ async def get_grupo_id(user_id: int) -> str:
         response = supabase.table("usuarios").select("grupo_id").eq("user_id", user_id).execute()
         data = response.data
 
-        if : # <--- LINHA 69 CORRIGIDA
+        if data: # <--- LINHA 69 CORRIGIDA CORRETAMENTE
             # Usuário encontrado, retorna o grupo_id existente
             logging.info(f"Grupo encontrado para user_id {user_id}: {data[0]['grupo_id']}")
             return data[0]['grupo_id']
