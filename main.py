@@ -5,7 +5,6 @@ import logging
 import asyncio
 import re
 import uuid
-from threading import Thread
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,7 +17,6 @@ from telegram.ext import (
     filters,
     CallbackQueryHandler
 )
-# === NOVO: Import do Supabase ===
 from supabase import create_client, Client
 
 # ========================
@@ -40,9 +38,12 @@ def home():
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+WEBHOOK_DOMAIN = os.environ.get("WEBHOOK_DOMAIN")  # Ex: https://bot-mercado.onrender.com
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL e SUPABASE_KEY devem ser definidos nas variáveis de ambiente.")
+if not WEBHOOK_DOMAIN:
+    raise ValueError("WEBHOOK_DOMAIN deve ser definido (ex: https://bot-mercado.onrender.com)")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -62,14 +63,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 ) = range(11)
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-
-# ========================
-# Variáveis Globais para o Loop e Application
-# ========================
-# Armazena a instância do Application e o loop de eventos principal
-# para acesso no webhook
-bot_application = None
-bot_event_loop = None
 
 # ========================
 # Funções Auxiliares
@@ -752,125 +745,60 @@ async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    global bot_application, bot_event_loop
-    if bot_application is None or bot_event_loop is None:
-        logging.warning("Bot application ou event loop ainda não está pronto para receber atualizações.")
-        return "Service Unavailable", 503
-    
     json_data = request.get_json()
     if not json_data:
         logging.warning("Requisição POST /webhook sem dados JSON.")
         return "Bad Request", 400
-    
+
     try:
-        update = Update.de_json(json_data, bot_application.bot)
-        logging.info(f"Webhook recebido: Update ID {update.update_id}, Tipo: {type(update)}")
-        
-        future = asyncio.run_coroutine_threadsafe(
-            bot_application.process_update(update),
-            bot_event_loop
-        )
-        logging.debug(f"Update {update.update_id} agendado para processamento no loop de eventos.")
+        update = Update.de_json(json_data, application.bot)
+        asyncio.get_event_loop().create_task(application.process_update(update))
     except Exception as e:
-        logging.error(f"Erro ao agendar atualização no loop de eventos: {e}", exc_info=True)
+        logging.error(f"Erro ao processar update: {e}", exc_info=True)
         return "Internal Server Error", 500
-    
+
     return "OK", 200
 
 # ========================
-# Função para iniciar o bot
+# Inicialização do Bot e Webhook
 # ========================
-async def start_bot():
-    global bot_application, bot_event_loop
-    bot_application = Application.builder().token(TOKEN).build()
-    
-    # Adicionar handlers
-    bot_application.add_handler(CommandHandler("start", start))
-    bot_application.add_handler(CommandHandler("help", help_command))
-    
-    # Conversations
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler("add", ask_for_product_data),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, search_product_input)
-        ],
-        states={
-            AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
-            CONFIRM_PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_product)],
-            AWAIT_EDIT_DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_delete_choice)],
-            AWAIT_EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input)],
-            CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
-            SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_product_input)],
-            AWAIT_INVITE_CODE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input)]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)]
-    )
-    
-    bot_application.add_handler(conv_handler)
-    
-    # Callback queries
-    bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="inserir_codigo"))
-    bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="compartilhar_lista"))
-    bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="edit_price_"))
-    bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="delete_"))
-    
-    # Iniciar o bot
-    await bot_application.initialize()
-    await bot_application.start()
-    
-    # Configurar webhook
-    await bot_application.updater.start_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-        url_path=TOKEN,
-        webhook_url=f"https://{os.environ.get('RENDER_APP_NAME', 'localhost')}.onrender.com/webhook"
-    )
-    
-    logging.info("Bot started successfully with webhook!")
+def set_webhook():
+    loop = asyncio.get_event_loop()
+    url = f"{WEBHOOK_DOMAIN}/webhook"
+    loop.run_until_complete(application.bot.set_webhook(url=url))
+    logging.info(f"Webhook do Telegram setado para: {url}")
 
 # ========================
-# Main function
+# Montando e registrando handlers e Application
 # ========================
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
+application = Application.builder().token(TOKEN).build()
+
+# Handlers principais...
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help_command))
+conv_handler = ConversationHandler(
+    entry_points=[
+        CommandHandler("add", ask_for_product_data),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, search_product_input)
+    ],
+    states={
+        AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
+        CONFIRM_PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_product)],
+        AWAIT_EDIT_DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_delete_choice)],
+        AWAIT_EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input)],
+        CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
+        SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_product_input)],
+        AWAIT_INVITE_CODE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input)]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
+application.add_handler(conv_handler)
+application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="inserir_codigo"))
+application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="compartilhar_lista"))
+application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="edit_price_"))
+application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="delete_"))
 
 if __name__ == "__main__":
-    logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
-    logging.info("Iniciando bot com webhook via Flask e Python 3.13.4")
-    
-    # Iniciar Flask em thread separada
-    flask_thread = Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-    logging.info("Servidor Flask iniciado em thread separada.")
-    
-    # Criar e configurar o loop de eventos principal
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        # Agendar a tarefa de inicialização do bot
-        init_task = loop.create_task(start_bot())
-        loop.run_until_complete(init_task)
-        logging.info("Bot initialized and webhook set.")
-        
-        # Manter o loop de eventos principal rodando
-        logging.info("Mantendo o loop de eventos principal ativo com loop.run_forever()...")
-        loop.run_forever()
-    except KeyboardInterrupt:
-        logging.info("Recebido KeyboardInterrupt. Encerrando...")
-    except Exception as e:
-        logging.critical(f"Erro fatal no bot: {e}", exc_info=True)
-    finally:
-        # Encerrar graciosamente
-        if bot_application:
-            pending = asyncio.all_tasks(loop=loop)
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            loop.close()
-            logging.info("Loop de eventos encerrado.")
-        else:
-            loop.close()
-    logging.info("Bot encerrado.")
-    logging.info("=" * 50)
+    logging.info("Iniciando Flask e registrando webhook do Telegram.")
+    set_webhook()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
