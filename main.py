@@ -786,19 +786,70 @@ async def start_bot():
     global bot_application
     bot_application = Application.builder().token(TOKEN).build()
 
-    # REGISTRE TODOS OS HANDLERS AQUI:
-    # Exemplo:
-    # bot_application.add_handler(CommandHandler("start", start))
-    # bot_application.add_handler(CommandHandler("help", help_command))
-    # conv_handler = ConversationHandler(
-    #     entry_points=[...],
-    #     states={...},
-    #     fallbacks=[...]
-    # )
-    # bot_application.add_handler(conv_handler)
-    # bot_application.add_handler(CallbackQueryHandler(...))
-    # [ADICIONE TODOS OS HANDLERS, CALLBACKS, ETC]
+    # ========================
+    # Handlers de comandos
+    # ========================
+    bot_application.add_handler(CommandHandler("start", start))
+    bot_application.add_handler(CommandHandler("help", help_command))
+    bot_application.add_handler(CommandHandler("cancel", cancel))
 
+    # ========================
+    # CallbackQueryHandler (botões inline)
+    # ========================
+    bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
+    bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
+    bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
+    bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
+
+    # ========================
+    # ConversationHandler (fluxos de conversa)
+    # ========================
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^➕ Adicionar Produto$"), ask_for_product_data),
+            MessageHandler(filters.Regex("^✏️ Editar ou Excluir$"), ask_for_edit_delete_choice),
+            MessageHandler(filters.Regex("^📋 Listar Produtos$"), list_products),
+            MessageHandler(filters.Regex("^🔍 Pesquisar Produto$"), search_product_input),
+            MessageHandler(filters.Regex("^ℹ️ Ajuda$"), help_command),
+        ],
+        states={
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_product_input),
+            ],
+            AWAIT_PRODUCT_DATA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data),
+            ],
+            CONFIRM_PRODUCT: [
+                MessageHandler(filters.Regex("^✅ Confirmar$|^❌ Cancelar$"), confirm_product),
+            ],
+            AWAIT_EDIT_DELETE_CHOICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_delete_choice),
+            ],
+            AWAIT_EDIT_PRICE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input),
+            ],
+            SEARCH_PRODUCT_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_product_input),
+            ],
+            CONFIRM_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion),
+            ],
+            AWAIT_INVITE_CODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input),
+            ],
+            AWAIT_INVITE_CODE_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.Regex("^❌ Cancelar$"), cancel),
+        ],
+    )
+    bot_application.add_handler(conv_handler)
+
+    # Inicialização padrão
     await bot_application.initialize()
     await bot_application.start()
     url = f"{WEBHOOK_DOMAIN}/webhook"
@@ -849,3 +900,4 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
