@@ -5,7 +5,13 @@ import re
 import uuid
 from threading import Thread
 from flask import Flask, request
-from telegram import Update
+from telegram import (
+    Update,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -900,4 +906,5 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
