@@ -1,4 +1,4 @@
-python-telegram-bot>=21.0
+python-telegram-bot[webhooks]>=21.0
 flask==2.0.3
 werkzeug==2.0.3
 supabase>=2.5.1
