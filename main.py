@@ -499,7 +499,8 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
-        response = supabase.table("produtos").select("*").eq("grupo_id", grupo_id).ilike("nome", f"%{search_term}%").order("timestamp", desc=True).limit(10).execute()
+        # CORREÇÃO: Selecionar explicitamente os campos necessários
+        response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).ilike("nome", f"%{search_term}%").order("timestamp", desc=True).limit(10).execute()
         produtos_encontrados = response.data
         if not produtos_encontrados:
             await update.message.reply_text(f"📭 Nenhum produto encontrado para '{search_term}'.", reply_markup=main_menu_keyboard())
@@ -507,7 +508,12 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
         texto = f"🔍 *Resultados para '{search_term}':*\n"
         for produto in produtos_encontrados:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
-            texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+            # VERIFICAR SE O CAMPO EXISTE E MOSTRAR
+            preco_unidade = produto.get('preco_por_unidade_formatado', '')
+            if preco_unidade:
+                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+            else:
+                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao pesquisar produtos no Supabase para user_id {user_id}: {e}")
@@ -521,7 +527,8 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
-        response = supabase.table("produtos").select("*").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
+        # CORREÇÃO: Selecionar explicitamente os campos necessários
+        response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
         produtos_do_grupo = response.data
         if not produtos_do_grupo:
             await update.message.reply_text("📭 Nenhum produto na lista ainda.", reply_markup=main_menu_keyboard())
@@ -529,7 +536,12 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto = "📋 *Lista de Produtos do seu Grupo:*\n"
         for produto in produtos_do_grupo:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
-            texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+            # VERIFICAR SE O CAMPO EXISTE E MOSTRAR
+            preco_unidade = produto.get('preco_por_unidade_formatado', '')
+            if preco_unidade:
+                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+            else:
+                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao listar produtos do Supabase: {e}")
@@ -646,7 +658,7 @@ async def handle_edit_price_input(update: Update, context: ContextTypes.DEFAULT_
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
-        check_response = supabase.table("produtos").select("id").eq("id", product['id']).eq("grupo_id", grupo_id).limit(1).execute()
+        check_response = supabase.table("produtos").select("id, preco_por_unidade_formatado").eq("id", product['id']).eq("grupo_id", grupo_id).limit(1).execute()
         if not check_response.data:
             await update.message.reply_text("❌ Você não tem permissão para editar este produto.")
             return MAIN_MENU
@@ -906,5 +918,6 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
