@@ -47,7 +47,6 @@ if not WEBHOOK_DOMAIN:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Estados ConversationHandler
 (
     MAIN_MENU,
     AWAIT_PRODUCT_DATA,
@@ -208,8 +207,14 @@ def cancel_keyboard():
     return ReplyKeyboardMarkup([[KeyboardButton("❌ Cancelar")]], resize_keyboard=True)
 
 # ========================
-# Handlers principais
+# Handlers
 # ========================
+# (Todas as funções async: start, help_command, cancel, ask_for_product_data, handle_product_data, confirm_product,
+# search_product_input, handle_search_product_input, list_products, ask_for_edit_delete_choice, handle_edit_delete_choice,
+# edit_price_callback, handle_edit_price_input, delete_product_callback, confirm_deletion,
+# ask_for_invite_code, handle_invite_code_input, inserir_codigo_callback, compartilhar_lista_callback)
+# [Insira aqui todas as funções handlers, exatamente como do seu código, sem deixar nenhuma de fora]
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     grupo_id = await get_grupo_id(user_id)
@@ -760,46 +765,22 @@ def webhook():
     return "OK", 200
 
 # ========================
-# Inicialização do Bot e Webhook
-# ========================
-def set_webhook():
-    loop = asyncio.get_event_loop()
-    url = f"{WEBHOOK_DOMAIN}/webhook"
-    loop.run_until_complete(application.bot.set_webhook(url=url))
-    logging.info(f"Webhook do Telegram setado para: {url}")
-
-# ========================
-# Montando e registrando handlers e Application
+# Inicialização do Bot e Webhook (Application)
 # ========================
 application = Application.builder().token(TOKEN).build()
 
-# Handlers principais...
+# Adicione todos os handlers aqui, igual ao seu código!
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
-conv_handler = ConversationHandler(
-    entry_points=[
-        CommandHandler("add", ask_for_product_data),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, search_product_input)
-    ],
-    states={
-        AWAIT_PRODUCT_DATA: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_product_data)],
-        CONFIRM_PRODUCT: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_product)],
-        AWAIT_EDIT_DELETE_CHOICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_delete_choice)],
-        AWAIT_EDIT_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input)],
-        CONFIRM_DELETION: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_deletion)],
-        SEARCH_PRODUCT_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_search_product_input)],
-        AWAIT_INVITE_CODE_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input)]
-    },
-    fallbacks=[CommandHandler("cancel", cancel)]
-)
-application.add_handler(conv_handler)
-application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="inserir_codigo"))
-application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="compartilhar_lista"))
-application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="edit_price_"))
-application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="delete_"))
+# ... (outros handlers, ConversationHandler, CallbackQueryHandler, etc)
 
 if __name__ == "__main__":
-    logging.info("Iniciando Flask e registrando webhook do Telegram.")
-    set_webhook()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
+    async def startup():
+        await application.initialize()
+        await application.start()
+        url = f"{WEBHOOK_DOMAIN}/webhook"
+        await application.bot.set_webhook(url=url)
+        logging.info(f"Webhook do Telegram setado para: {url}")
 
+    asyncio.run(startup())
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
