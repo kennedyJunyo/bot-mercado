@@ -752,7 +752,7 @@ def webhook():
 
     try:
         update = Update.de_json(json_data, application.bot)
-        asyncio.get_event_loop().create_task(application.process_update(update))
+        asyncio.run(application.process_update(update))
     except Exception as e:
         logging.error(f"Erro ao processar update: {e}", exc_info=True)
         return "Internal Server Error", 500
@@ -802,3 +802,4 @@ if __name__ == "__main__":
     logging.info("Iniciando Flask e registrando webhook do Telegram.")
     set_webhook()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)), debug=False)
+
