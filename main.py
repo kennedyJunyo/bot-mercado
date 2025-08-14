@@ -762,21 +762,13 @@ async def handle_edit_price_input(update: Update, context: ContextTypes.DEFAULT_
         )
     return MAIN_MENU
 
-# ========================
-# Callback para excluir produto
-# ========================
 async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback para o botão 'Excluir'."""
     query = update.callback_query
     await query.answer()
-    # Extrair o ID do produto do callback_data
-    product_id = query.data.split("_")[1] # Ex: "delete_12345" -> ["delete", "12345"]
+    product_id = query.data.split("_")[1]
     user_id = query.from_user.id
     try:
-        # === USANDO A NOVA FUNÇÃO COM SUPABASE ===
         grupo_id = await get_grupo_id(user_id)
-        # === BUSCAR PRODUTO PELO ID E GRUPO ===
-        # Isso garante que o usuário só delete produtos do próprio grupo
         response = supabase.table("produtos").select("*").eq("id", product_id).eq("grupo_id", grupo_id).limit(1).execute()
         product = response.data[0] if response.data else None
         if not product:
@@ -784,14 +776,8 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
             await query.message.reply_text("...", reply_markup=main_menu_keyboard())
             return MAIN_MENU
         context.user_data['deleting_product'] = product
-        # Criar teclado de confirmação inline
-        confirm_keyboard = [
-            [InlineKeyboardButton("✅ Confirmar", callback_data=f"confirm_delete_{product_id}")],
-            [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_delete")]
-        ]
-        reply_markup = InlineKeyboardMarkup(confirm_keyboard)
         await query.edit_message_text(
-            f"🗑️ *Excluir Produto:*"
+            f"🗑️ *Excluir Produto:*\n"
             f"📦 *{product['nome']}*\n"
             f"🏷️ *Tipo:* {product['tipo']}\n"
             f"🏭 *Marca:* {product['marca']}\n"
@@ -799,7 +785,7 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
             f"💰 *Preço:* R$ {format_price(product['preco'])}\n"
             f"📝 *Observações:* {product['observacoes']}\n"
             f"Tem certeza que deseja excluir este produto?",
-            reply_markup=reply_markup,
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("✅ Confirmar"), KeyboardButton("❌ Cancelar")]], resize_keyboard=True),
             parse_mode="Markdown"
         )
         return CONFIRM_DELETION
@@ -836,58 +822,6 @@ async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Erro ao excluir produto. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
-    return MAIN_MENU
-# ========================
-# Funções auxiliares para exclusão
-# ========================
-async def confirm_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback para confirmar exclusão."""
-    query = update.callback_query
-    await query.answer()
-    
-    # Extrair o ID do produto da callback_data
-    product_id = query.data.split("_")[2]  # "confirm_delete_12345" -> ["confirm", "delete", "12345"]
-    
-    user_id = query.from_user.id
-    try:
-        grupo_id = await get_grupo_id(user_id)
-        # Primeiro, buscar o produto para obter o nome
-        product_response = supabase.table("produtos").select("nome").eq("id", product_id).eq("grupo_id", grupo_id).limit(1).execute()
-        product = product_response.data[0] if product_response.data else None
-        
-        if not product:
-            await query.edit_message_text("❌ Produto não encontrado ou você não tem permissão para excluir este produto.")
-            await query.message.reply_text("...", reply_markup=main_menu_keyboard())
-            return MAIN_MENU
-            
-        # Verificar permissão e excluir
-        check_response = supabase.table("produtos").select("id").eq("id", product_id).eq("grupo_id", grupo_id).limit(1).execute()
-        if not check_response.data:
-            await query.edit_message_text("❌ Você não tem permissão para excluir este produto.")
-            await query.message.reply_text("...", reply_markup=main_menu_keyboard())
-            return MAIN_MENU
-            
-        # Excluir o produto
-        response = supabase.table("produtos").delete().eq("id", product_id).execute()
-        logging.info(f"Produto ID {product_id} excluído do Supabase. Resposta: {response}")
-        
-        # Enviar confirmação
-        await query.edit_message_text(
-            f"✅ Produto *{product['nome']}* excluído com sucesso!",
-            reply_markup=main_menu_keyboard(),
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        logging.error(f"Erro ao excluir produto ID {product_id}: {e}")
-        await query.edit_message_text("❌ Erro ao excluir produto. Tente novamente mais tarde.")
-        await query.message.reply_text("...", reply_markup=main_menu_keyboard())
-    return MAIN_MENU
-
-async def cancel_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback para cancelar exclusão."""
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("❌ Exclusão cancelada.", reply_markup=main_menu_keyboard())
     return MAIN_MENU
 
 # ========================
@@ -931,19 +865,17 @@ async def start_bot():
     bot_application.add_handler(CommandHandler("help", help_command))
     bot_application.add_handler(CommandHandler("cancel", cancel))
 
-# ========================
-# CallbackQueryHandler (botões inline)
-# ========================
-bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
-bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
-bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
-bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
-bot_application.add_handler(CallbackQueryHandler(confirm_delete_callback, pattern="^confirm_delete_"))
-bot_application.add_handler(CallbackQueryHandler(cancel_delete_callback, pattern="^cancel_delete$"))
+    # ========================
+    # CallbackQueryHandler (botões inline)
+    # ========================
+    bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
+    bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
+    bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
+    bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
 
-# ========================
-# ConversationHandler (fluxos de conversa)
-# ========================
+    # ========================
+    # ConversationHandler (fluxos de conversa)
+    # ========================
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
@@ -1040,8 +972,6 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
-
-
 
 
 
