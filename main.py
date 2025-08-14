@@ -543,10 +543,16 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
         for produto in produtos_encontrados:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
             preco_unidade = produto.get('preco_por_unidade_formatado', '')
+            
+            # Tratamento seguro da marca - só exibe se não estiver vazio
+            marca_display = ""
+            if produto.get('marca') and produto['marca'].strip():
+                marca_display = f" - {produto['marca']}"
+                
             if preco_unidade:
-                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
             else:
-                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao pesquisar produtos no Supabase para user_id {user_id}: {e}")
@@ -560,7 +566,7 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
-        # CORREÇÃO: Selecionar explicitamente os campos necessários
+        # Corrigido: Selecionar explicitamente os campos necessários
         response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
         produtos_do_grupo = response.data
         if not produtos_do_grupo:
@@ -569,12 +575,17 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto = "📋 *Lista de Produtos do seu Grupo:*\n"
         for produto in produtos_do_grupo:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
-            # VERIFICAR SE O CAMPO EXISTE E MOSTRAR
             preco_unidade = produto.get('preco_por_unidade_formatado', '')
+            
+            # Tratamento seguro da marca - só exibe se não estiver vazio
+            marca_display = ""
+            if produto.get('marca') and produto['marca'].strip():
+                marca_display = f" - {produto['marca']}"
+                
             if preco_unidade:
-                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
             else:
-                texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao listar produtos do Supabase: {e}")
@@ -951,6 +962,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
