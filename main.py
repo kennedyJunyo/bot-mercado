@@ -492,14 +492,48 @@ async def search_product_input(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("🔍 Digite o nome do produto que você deseja pesquisar:", reply_markup=cancel_keyboard())
     return SEARCH_PRODUCT_INPUT
 
+# ========================
+# Modificar a função handle_search_product_input
+# ========================
 async def handle_search_product_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
+    
+    # Verificação inicial para evitar que botões sejam tratados como pesquisa
+    botoes_especiais = [
+        "➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos",
+        "🔍 Pesquisar Produto", "ℹ️ Ajuda", "❌ Cancelar",
+        "👪 Compartilhar Lista", "🔐 Inserir Código", "✅ Confirmar"
+    ]
+    
+    # Se a mensagem for um botão, não faz pesquisa - trata como comando
+    if update.message.text.strip() in botoes_especiais:
+        # Trata como comando do botão, não como pesquisa
+        text = update.message.text.strip()
+        if text == "➕ Adicionar Produto":
+            return await ask_for_product_data(update, context)
+        elif text == "📋 Listar Produtos":
+            return await list_products(update, context)
+        elif text == "🔍 Pesquisar Produto":
+            return await search_product_input(update, context)
+        elif text == "ℹ️ Ajuda":
+            return await help_command(update, context)
+        elif text == "👪 Compartilhar Lista":
+            return await compartilhar_lista_callback(update, context)
+        elif text == "🔐 Inserir Código":
+            return await ask_for_invite_code(update, context)
+        elif text == "✏️ Editar ou Excluir":
+            return await ask_for_edit_delete_choice(update, context)
+        else:
+            # Para outros botões, volta ao menu principal
+            await update.message.reply_text("⚠️ Por favor, use os botões do menu principal para navegar.", reply_markup=main_menu_keyboard())
+            return MAIN_MENU
+    
     search_term = update.message.text.strip().lower()
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
-        # CORREÇÃO: Selecionar explicitamente os campos necessários
+        # Corrigido: Selecionar explicitamente os campos necessários
         response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).ilike("nome", f"%{search_term}%").order("timestamp", desc=True).limit(10).execute()
         produtos_encontrados = response.data
         if not produtos_encontrados:
@@ -508,7 +542,6 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
         texto = f"🔍 *Resultados para '{search_term}':*\n"
         for produto in produtos_encontrados:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
-            # VERIFICAR SE O CAMPO EXISTE E MOSTRAR
             preco_unidade = produto.get('preco_por_unidade_formatado', '')
             if preco_unidade:
                 texto += f"🔹 *{produto['nome']}* - {produto['marca']} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
@@ -918,6 +951,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
