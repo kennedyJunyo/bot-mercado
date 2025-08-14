@@ -267,10 +267,11 @@ def calculate_unit_price(unit_str, price):
 
 # === TECLADOS ===
 def main_menu_keyboard():
+    # Botão "🔐 Inserir Código" REMOVIDO do menu principal
     return ReplyKeyboardMarkup([
-        [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar/Excluir")],
-        [KeyboardButton("🔍 Pesquisar Produto"), KeyboardButton("📋 Listar Produtos")],
-        [KeyboardButton("👪 Compartilhar Lista"), KeyboardButton("🔐 Inserir Código")]
+        [KeyboardButton("➕ Adicionar Produto"), KeyboardButton("✏️ Editar ou Excluir")],
+        [KeyboardButton("📋 Listar Produtos"), KeyboardButton("🔍 Pesquisar Produto")],
+        [KeyboardButton("ℹ️ Ajuda")]  # Botão adicionado
     ], resize_keyboard=True)
 
 def cancel_keyboard():
@@ -1047,3 +1048,4 @@ if __name__ == "__main__":
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
 # >>>>> FIM DO BLOCO PRINCIPAL <<<<<
+
