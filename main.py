@@ -549,10 +549,15 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
             if produto.get('marca') and produto['marca'].strip():
                 marca_display = f" - {produto['marca']}"
                 
+            # Novo layout: dividido em linhas
             if preco_unidade:
-                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
+                texto += f"   📦 {produto['tipo']}\n"
+                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}   📊 {preco_unidade}{obs}\n"
             else:
-                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
+                texto += f"   📦 {produto['tipo']}\n"
+                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao pesquisar produtos no Supabase para user_id {user_id}: {e}")
@@ -560,7 +565,7 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
     return MAIN_MENU
 
 # ========================
-# Listar produtos
+# Corrigir a função list_products
 # ========================
 async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -582,10 +587,15 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if produto.get('marca') and produto['marca'].strip():
                 marca_display = f" - {produto['marca']}"
                 
+            # Novo layout: dividido em linhas
             if preco_unidade:
-                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])} ({preco_unidade}){obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
+                texto += f"   📦 {produto['tipo']}\n"
+                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}   📊 {preco_unidade}{obs}\n"
             else:
-                texto += f"🔹 *{produto['nome']}*{marca_display} - {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
+                texto += f"   📦 {produto['tipo']}\n"
+                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao listar produtos do Supabase: {e}")
@@ -962,6 +972,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
