@@ -664,22 +664,17 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
                 [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                f"✏️ *Produto Encontrado:*
-"
-                f"📦 *{product['nome']}*
-"
-                f"🏷️ *Tipo:* {product['tipo']}
-"
-                f"🏭 *Marca:* {product['marca']}
-"
-                f"📏 *Unidade:* {product['unidade']}
-"
-                f"💰 *Preço:* R$ {format_price(product['preco'])}
-"
-                f"Escolha uma ação:",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
+        await update.message.reply_text(
+            f"✏️ *Produto Selecionado:*\n"
+            f"📦 *{product['nome']}*\n"
+            f"🏷️ *Tipo:* {product['tipo']}\n"
+            f"🏭 *Marca:* {product['marca']}\n"
+            f"📏 *Unidade:* {product['unidade']}\n"
+            f"💰 *Preço:* R$ {format_price(product['preco'])}\n"
+            f"📝 *Observações:* {product['observacoes']}\n"
+            f"Escolha uma ação:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
             )
             return AWAIT_EDIT_PRICE
 
@@ -1064,6 +1059,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
