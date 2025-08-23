@@ -617,42 +617,93 @@ async def ask_for_edit_delete_choice(update: Update, context: ContextTypes.DEFAU
 async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
-    product_name = update.message.text.strip().title()
+
+    search_term = update.message.text.strip().title()
     user_id = update.effective_user.id
+
     try:
         grupo_id = await get_grupo_id(user_id)
-        response = supabase.table("produtos").select("*").eq("grupo_id", grupo_id).eq("nome", product_name).order("timestamp", desc=True).limit(1).execute()
-        matching_products = response.data
+
+        # Função auxiliar para buscar todos os produtos com paginação
+        def fetch_all_products():
+            all_data = []
+            offset = 0
+            page_size = 101  # Você mencionou que é 101 por página
+            while True:
+                response = supabase.table("produtos") \
+                    .select("id, nome, tipo, marca, unidade, preco, observacoes") \
+                    .eq("grupo_id", grupo_id) \
+                    .ilike("nome", f"%{search_term}%") \
+                    .order("timestamp", desc=True) \
+                    .range(offset, offset + page_size - 1) \
+                    .execute()
+                batch = response.data
+                if not batch:
+                    break
+                all_data.extend(batch)
+                if len(batch) < page_size:
+                    break
+                offset += page_size
+            return all_data
+
+        matching_products = fetch_all_products()
+
         if not matching_products:
             await update.message.reply_text(
-                f"📭 Produto '{product_name}' não encontrado no seu grupo.",
+                f"📭 Nenhum produto encontrado com o nome '{search_term}'.",
                 reply_markup=main_menu_keyboard()
             )
             return MAIN_MENU
-        product = matching_products[0]
-        context.user_data['editing_product'] = product
-        keyboard = [
-            [InlineKeyboardButton("✏️ Editar Preço", callback_data=f"edit_price_{product['id']}")],
-            [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
-        ]
+
+        # Se só encontrar 1, vai direto
+        if len(matching_products) == 1:
+            product = matching_products[0]
+            context.user_data['editing_product'] = product
+            keyboard = [
+                [InlineKeyboardButton("✏️ Editar Preço", callback_data=f"edit_price_{product['id']}")],
+                [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(
+                f"✏️ *Produto Encontrado:*
+"
+                f"📦 *{product['nome']}*
+"
+                f"🏷️ *Tipo:* {product['tipo']}
+"
+                f"🏭 *Marca:* {product['marca']}
+"
+                f"📏 *Unidade:* {product['unidade']}
+"
+                f"💰 *Preço:* R$ {format_price(product['preco'])}
+"
+                f"Escolha uma ação:",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+            return AWAIT_EDIT_PRICE
+
+        # Se encontrar mais de 1, lista com botões para escolher
+        context.user_data['pending_products'] = matching_products
+        keyboard = []
+        for idx, prod in enumerate(matching_products):
+            marca = f" - {prod['marca']}" if prod['marca'] else ""
+            preco_str = format_price(prod['preco'])
+            button_text = f"{idx+1}. {prod['nome']}{marca} ({prod['unidade']}, R${preco_str})"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"select_prod_{prod['id']}")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"✏️ *Produto Selecionado:*\n"
-            f"📦 *{product['nome']}*\n"
-            f"🏷️ *Tipo:* {product['tipo']}\n"
-            f"🏭 *Marca:* {product['marca']}\n"
-            f"📏 *Unidade:* {product['unidade']}\n"
-            f"💰 *Preço:* R$ {format_price(product['preco'])}\n"
-            f"📝 *Observações:* {product['observacoes']}\n"
-            f"Escolha uma ação:",
+            f"🔍 Encontrei {len(matching_products)} produtos com o nome '{search_term}'. Escolha qual deseja editar ou excluir:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        return AWAIT_EDIT_PRICE
+        return AWAIT_EDIT_DELETE_CHOICE
+
     except Exception as e:
-        logging.error(f"Erro ao buscar produto '{product_name}' para edição/exclusão: {e}")
+        logging.error(f"Erro ao buscar produto '{search_term}' para edição/exclusão: {e}")
         await update.message.reply_text(
-            "❌ Erro ao acessar o produto. Tente novamente mais tarde.",
+            "❌ Erro ao acessar os produtos. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
@@ -854,6 +905,46 @@ def webhook():
 # ========================
 # Inicialização do bot e registro de handlers
 # ========================
+async def select_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    product_id = query.data.split("_")[2]  # select_prod_{id}
+
+    pending_products = context.user_data.get('pending_products', [])
+    product = next((p for p in pending_products if p['id'] == product_id), None)
+
+    if not product:
+        await query.edit_message_text("❌ Produto não encontrado.")
+        await query.message.reply_text("...", reply_markup=main_menu_keyboard())
+        return MAIN_MENU
+
+    context.user_data['editing_product'] = product
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ Editar Preço", callback_data=f"edit_price_{product['id']}")],
+        [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        f"✏️ *Produto Selecionado:*
+"
+        f"📦 *{product['nome']}*
+"
+        f"🏷️ *Tipo:* {product['tipo']}
+"
+        f"🏭 *Marca:* {product['marca']}
+"
+        f"📏 *Unidade:* {product['unidade']}
+"
+        f"💰 *Preço:* R$ {format_price(product['preco'])}
+"
+        f"Escolha uma ação:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+    return AWAIT_EDIT_PRICE
+
 async def start_bot():
     global bot_application
     bot_application = Application.builder().token(TOKEN).build()
@@ -872,7 +963,8 @@ async def start_bot():
     bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
     bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
     bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
-
+    bot_application.add_handler(CallbackQueryHandler(select_product_callback, pattern="^select_prod_"))
+    
     # ========================
     # ConversationHandler (fluxos de conversa)
     # ========================
@@ -972,6 +1064,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
