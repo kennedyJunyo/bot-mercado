@@ -679,25 +679,22 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
             )
             return AWAIT_EDIT_PRICE # Retornar o estado correto aqui
 
-        # Se encontrar mais de 1, lista com botões para escolher
-        context.user_data['pending_products'] = matching_products
-        keyboard = []
-        for idx, prod in enumerate(matching_products):
-            marca = f" - {prod['marca']}" if prod.get('marca') else ""
-            preco_str = format_price(prod['preco'])
-            # Limitar o tamanho do texto do botão para evitar erros
-            button_text = f"{idx+1}. {prod['nome']}{marca} ({prod['unidade']}, R${preco_str})"
-            if len(button_text) > 60: # Limite aproximado do Telegram para texto de botão
-                 button_text = button_text[:57] + "..."
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"select_prod_{prod['id']}")])
+        # Correção: Sempre listar produtos encontrados como texto com numeração
+        context.user_data['pending_products'] = matching_products # Armazena a lista para uso posterior
+        texto_lista = f"🔍 Encontrei {len(matching_products)} produto(s) com o nome semelhante a '{search_term}'.\n\n"
+        texto_lista += "Por favor, digite o *número* do produto que deseja editar ou excluir:\n\n"
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"🔍 Encontrei {len(matching_products)} produtos com o nome semelhante a '{search_term}'. Escolha qual deseja editar ou excluir:",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
-        return AWAIT_EDIT_DELETE_CHOICE # Continuar no mesmo estado para esperar a escolha
+        for idx, prod in enumerate(matching_products):
+            marca = f" - {prod['marca']}" if prod.get('marca') and prod['marca'].strip() else ""
+            preco_str = format_price(prod['preco'])
+            obs = f" ({prod['observacoes']})" if prod.get('observacoes') and prod['observacoes'].strip() else ""
+            # Formato: 1. Nome - Marca (Tipo, Unidade, R$Preco) (Obs)
+            texto_lista += f"{idx + 1}. *{prod['nome']}*{marca} ({prod['tipo']}, {prod['unidade']}, R${preco_str}){obs}\n"
+
+        # Correção: Garantir botão de Cancelar na tela de escolha
+        await update.message.reply_text(texto_lista, parse_mode="Markdown", reply_markup=cancel_keyboard())
+        # Muda o estado para esperar o número digitado pelo usuário
+        return AWAIT_ENTRY_CHOICE
 
     except Exception as e:
         logging.error(f"Erro ao buscar produto '{search_term}' para edição/exclusão: {e}", exc_info=True) # Adiciona exc_info para mais detalhes
@@ -706,7 +703,58 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
+# ========================
+# Processar escolha por número (Correção: Editar/Excluir)
+# ========================
+async def process_entry_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa o número do produto escolhido para edição/exclusão."""
+    if update.message.text == "❌ Cancelar":
+        return await cancel(update, context)
 
+    try:
+        choice = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("⚠️ Entrada inválida. Por favor, digite apenas o *número* do produto.", reply_markup=cancel_keyboard(), parse_mode="Markdown")
+        return AWAIT_ENTRY_CHOICE # Permanece no mesmo estado
+
+    pending_products = context.user_data.get('pending_products')
+    if not pending_products or not isinstance(pending_products, list):
+         await update.message.reply_text("❌ Erro ao recuperar a lista de produtos. Tente novamente.", reply_markup=main_menu_keyboard())
+         return MAIN_MENU
+
+    if choice < 1 or choice > len(pending_products):
+        await update.message.reply_text(f"⚠️ Número inválido. Escolha um número entre 1 e {len(pending_products)}.", reply_markup=cancel_keyboard())
+        # Reenvia a lista para facilitar
+        # (Opcional: reenviar a lista aqui, mas pode ser verboso. Só pede o número novamente)
+        return AWAIT_ENTRY_CHOICE # Permanece no mesmo estado
+
+    selected_product = pending_products[choice - 1]
+    context.user_data['editing_product'] = selected_product # Reutiliza a chave editing_product
+
+    # Criar teclado inline para Editar/Excluir o produto selecionado
+    keyboard = [
+        [InlineKeyboardButton("✏️ Editar Preço", callback_data=f"edit_price_{selected_product['id']}")],
+        [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{selected_product['id']}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    marca_display = f" - {selected_product['marca']}" if selected_product.get('marca') and selected_product['marca'].strip() else ""
+    obs_display = f"\n📝 *Observações:* {selected_product['observacoes']}" if selected_product.get('observacoes') and selected_product['observacoes'].strip() else ""
+
+    await update.message.reply_text(
+        f"✏️ *Produto Selecionado:*\n"
+        f"📦 *{selected_product['nome']}*{marca_display}\n"
+        f"🏷️ *Tipo:* {selected_product['tipo']}\n"
+        f"📏 *Unidade:* {selected_product['unidade']}\n"
+        f"💰 *Preço:* R$ {format_price(selected_product['preco'])}"
+        f"{obs_display}\n\n"
+        f"Escolha uma ação:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
+    # Sai do estado AWAIT_ENTRY_CHOICE e permite que os callbacks tomem o controle
+    return MAIN_MENU
+    
 # ========================
 # Callbacks para editar/excluir
 # ========================
@@ -999,7 +1047,12 @@ async def start_bot():
             AWAIT_INVITE_CODE_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input),
             ],
-        },
+            # Correção: Novo estado para esperar a escolha numérica do produto
+            AWAIT_ENTRY_CHOICE: [
+                MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Permite cancelar
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_entry_choice), # Handler para o número
+        ],
+    },
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^❌ Cancelar$"), cancel),
@@ -1058,6 +1111,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
