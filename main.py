@@ -540,24 +540,59 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text(f"📭 Nenhum produto encontrado para '{search_term}'.", reply_markup=main_menu_keyboard())
             return MAIN_MENU
         texto = f"🔍 *Resultados para '{search_term}':*\n"
-        for produto in produtos_encontrados:
-            obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
-            preco_unidade = produto.get('preco_por_unidade_formatado', '')
-            
-            # Tratamento seguro da marca - só exibe se não estiver vazio
-            marca_display = ""
-            if produto.get('marca') and produto['marca'].strip():
-                marca_display = f" - {produto['marca']}"
-                
-            # Novo layout: dividido em linhas
-            if preco_unidade:
-                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
-                texto += f"   📦 {produto['tipo']}\n"
-                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}   📊 {preco_unidade}{obs}\n"
-            else:
-                texto += f"🔹 *{produto['nome']}*{marca_display}\n"
-                texto += f"   📦 {produto['tipo']}\n"
-                texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+        for i, produto in enumerate(produtos_encontrados):
+            if i > 0: # Adiciona separador antes de cada item, exceto o primeiro
+                 texto += "\n--\n"
+
+            # Linha 1: Nome do produto
+            texto += f"🏷️ *{produto['nome']}*\n"
+
+            # Linha 2: Tipo, Marca, Unidade
+            marca_part = f" | 🏭 {produto['marca']}" if produto.get('marca') and produto['marca'].strip() else ""
+            texto += f"  📦 {produto['tipo']}{marca_part} | 📏 {produto['unidade']}\n"
+
+            # Linha 3: Preço e Observações
+            obs_part = f"   ({produto['observacoes']})" if produto.get('observacoes') and produto['observacoes'].strip() else ""
+            texto += f"  💵 R${format_price(produto['preco'])} |{obs_part}\n"
+
+            # Linhas 4+: Preços por unidade de medida (se disponíveis)
+            # Extrair e formatar os preços unitários do campo preco_por_unidade_formatado
+            preco_unidade_texto = produto.get('preco_por_unidade_formatado', '')
+            if preco_unidade_texto:
+                # Exemplo de preco_unidade_texto: "R$ 6,00/kg (Dona)"
+                # Padrão para capturar valor e unidade (ex: R$ 6,00/kg)
+                padrao_valor_unidade = r"R\$\s*([\d.,]+)\s*/\s*([^\s(]+)"
+                match = re.search(padrao_valor_unidade, preco_unidade_texto)
+                if match:
+                     valor_principal = match.group(1).replace('.', '').replace(',', '.') # Converter para float
+                     unidade_principal = match.group(2)
+                     try:
+                         valor_principal_float = float(valor_principal)
+                         texto += f"📊 Preço por {unidade_principal}: R$ {match.group(1)}\n"
+
+                         # Calcular e mostrar preço por 100g ou 100ml se for o caso
+                         if unidade_principal.lower() == 'kg':
+                             preco_100g = valor_principal_float / 10
+                             texto += f"📊 Preço por 100g: R$ {format_price(preco_100g)}\n"
+                         elif unidade_principal.lower() == 'g':
+                             # Se for por grama, calcula por 100g
+                             preco_100g = valor_principal_float * 100
+                             texto += f"📊 Preço por 100g: R$ {format_price(preco_100g)}\n"
+                         elif unidade_principal.lower() == 'l':
+                             preco_100ml = valor_principal_float / 10
+                             texto += f"📊 Preço por 100ml: R$ {format_price(preco_100ml)}\n"
+                         elif unidade_principal.lower() == 'ml':
+                             # Se for por ml, calcula por 100ml
+                             preco_100ml = valor_principal_float * 100
+                             texto += f"📊 Preço por 100ml: R$ {format_price(preco_100ml)}\n"
+                         # Adicione outros casos conforme necessário (und, rolo, metro, etc.)
+                     except ValueError:
+                         # Se não conseguir converter o valor, mostra o texto original
+                         texto += f"📊 {preco_unidade_texto}\n"
+                else:
+                     # Se não casar com o padrão esperado, mostra o texto original
+                     texto += f"📊 {preco_unidade_texto}\n"
+            # Se não houver preco_por_unidade_formatado, não mostra nada adicional
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
     except Exception as e:
         logging.error(f"Erro ao pesquisar produtos no Supabase para user_id {user_id}: {e}")
@@ -1111,6 +1146,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
