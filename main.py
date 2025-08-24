@@ -63,14 +63,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     AWAIT_PRODUCT_DATA,
     CONFIRM_PRODUCT,
     AWAIT_EDIT_DELETE_CHOICE,
-    AWAIT_EDIT_PRICE,
+    AWAIT_EDIT_PRICE, # Estado para esperar o novo preço após escolher editar
     AWAIT_DELETION_CHOICE,
     CONFIRM_DELETION,
     SEARCH_PRODUCT_INPUT,
-    AWAIT_ENTRY_CHOICE,
+    AWAIT_ENTRY_CHOICE, # Estado para esperar o número do produto na edição/exclusão
+    AWAIT_ACTION_CHOICE, # <--- NOVO: Estado para esperar o clique em Editar/Excluir
     AWAIT_INVITE_CODE,
     AWAIT_INVITE_CODE_INPUT
-) = range(11)
+) = range(12) # Ajuste o range para 12 pois adicionamos um novo estado
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
@@ -759,7 +760,7 @@ async def process_entry_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     pending_products = context.user_data.get('pending_products')
     if not pending_products or not isinstance(pending_products, list):
          await update.message.reply_text("❌ Erro ao recuperar a lista de produtos. Tente novamente.", reply_markup=main_menu_keyboard())
-         return MAIN_MENU
+         return AWAIT_ACTION_CHOICE # <--- CORRETO
 
     if choice < 1 or choice > len(pending_products):
         await update.message.reply_text(f"⚠️ Número inválido. Escolha um número entre 1 e {len(pending_products)}.", reply_markup=cancel_keyboard())
@@ -1042,8 +1043,6 @@ async def start_bot():
     # ========================
     bot_application.add_handler(CallbackQueryHandler(compartilhar_lista_callback, pattern="^compartilhar_lista$"))
     bot_application.add_handler(CallbackQueryHandler(inserir_codigo_callback, pattern="^inserir_codigo$"))
-    bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
-    bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
     bot_application.add_handler(CallbackQueryHandler(select_product_callback, pattern="^select_prod_"))
     
     # ========================
@@ -1087,9 +1086,19 @@ async def start_bot():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_invite_code_input),
             ],
             # Correção: Novo estado para esperar a escolha numérica do produto
-            AWAIT_ENTRY_CHOICE: [
-                MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Permite cancelar
-                MessageHandler(filters.TEXT & ~filters.COMMAND, process_entry_choice), # Handler para o número
+        AWAIT_ENTRY_CHOICE: [
+            MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Permite cancelar
+            MessageHandler(filters.TEXT & ~filters.COMMAND, process_entry_choice), # Handler para o número
+        ],
+        # Correção: Novo estado para esperar o clique nos botões inline Editar/Excluir
+        AWAIT_ACTION_CHOICE: [
+             CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"),
+             CallbackQueryHandler(delete_product_callback, pattern="^delete_"),
+             # Opcional: Adicionar um handler para cancelar aqui também, se quiser um botão inline de cancelar
+             # MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Se tiver um botão de cancelar inline
+        ],
+        AWAIT_EDIT_PRICE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input),
         ],
     },
         fallbacks=[
@@ -1150,4 +1159,5 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
