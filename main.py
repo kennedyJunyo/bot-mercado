@@ -614,13 +614,14 @@ async def ask_for_edit_delete_choice(update: Update, context: ContextTypes.DEFAU
     )
     return AWAIT_EDIT_DELETE_CHOICE
 
+# Editar/Excluir produto (Versão 02 Corrigida)
+# ========================
 async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
 
     search_term = update.message.text.strip().title()
     user_id = update.effective_user.id
-
     try:
         grupo_id = await get_grupo_id(user_id)
 
@@ -628,15 +629,15 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
         def fetch_all_products():
             all_data = []
             offset = 0
-            page_size = 101  # Você mencionou que é 101 por página
+            page_size = 101 # Ajuste conforme necessário, 100 é um valor comum
             while True:
-                response = supabase.table("produtos") \
-                    .select("id, nome, tipo, marca, unidade, preco, observacoes") \
-                    .eq("grupo_id", grupo_id) \
-                    .ilike("nome", f"%{search_term}%") \
-                    .order("timestamp", desc=True) \
-                    .range(offset, offset + page_size - 1) \
-                    .execute()
+                response = (supabase.table("produtos")
+                            .select("id, nome, tipo, marca, unidade, preco, observacoes")
+                            .eq("grupo_id", grupo_id)
+                            .ilike("nome", f"%{search_term}%") # Usar ilike para busca parcial
+                            .order("timestamp", desc=True)
+                            .range(offset, offset + page_size - 1)
+                            .execute())
                 batch = response.data
                 if not batch:
                     break
@@ -655,7 +656,7 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
             )
             return MAIN_MENU
 
-        # Se só encontrar 1, vai direto
+        # Se só encontrar 1, vai direto para as opções de editar/excluir
         if len(matching_products) == 1:
             product = matching_products[0]
             context.user_data['editing_product'] = product
@@ -664,39 +665,42 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
                 [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            f"✏️ *Produto Selecionado:*\n"
-            f"📦 *{product['nome']}*\n"
-            f"🏷️ *Tipo:* {product['tipo']}\n"
-            f"🏭 *Marca:* {product['marca']}\n"
-            f"📏 *Unidade:* {product['unidade']}\n"
-            f"💰 *Preço:* R$ {format_price(product['preco'])}\n"
-            f"📝 *Observações:* {product['observacoes']}\n"
-            f"Escolha uma ação:",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+            await update.message.reply_text(
+                f"✏️ *Produto Selecionado:*\n"
+                f"📦 *{product['nome']}*\n"
+                f"🏷️ *Tipo:* {product['tipo']}\n"
+                f"🏭 *Marca:* {product['marca']}\n"
+                f"📏 *Unidade:* {product['unidade']}\n"
+                f"💰 *Preço:* R$ {format_price(product['preco'])}\n"
+                f"📝 *Observações:* {product['observacoes'] or ''}\n"
+                f"Escolha uma ação:",
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
             )
-            return AWAIT_EDIT_PRICE
+            return AWAIT_EDIT_PRICE # Retornar o estado correto aqui
 
         # Se encontrar mais de 1, lista com botões para escolher
         context.user_data['pending_products'] = matching_products
         keyboard = []
         for idx, prod in enumerate(matching_products):
-            marca = f" - {prod['marca']}" if prod['marca'] else ""
+            marca = f" - {prod['marca']}" if prod.get('marca') else ""
             preco_str = format_price(prod['preco'])
+            # Limitar o tamanho do texto do botão para evitar erros
             button_text = f"{idx+1}. {prod['nome']}{marca} ({prod['unidade']}, R${preco_str})"
+            if len(button_text) > 60: # Limite aproximado do Telegram para texto de botão
+                 button_text = button_text[:57] + "..."
             keyboard.append([InlineKeyboardButton(button_text, callback_data=f"select_prod_{prod['id']}")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            f"🔍 Encontrei {len(matching_products)} produtos com o nome '{search_term}'. Escolha qual deseja editar ou excluir:",
+            f"🔍 Encontrei {len(matching_products)} produtos com o nome semelhante a '{search_term}'. Escolha qual deseja editar ou excluir:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        return AWAIT_EDIT_DELETE_CHOICE
+        return AWAIT_EDIT_DELETE_CHOICE # Continuar no mesmo estado para esperar a escolha
 
     except Exception as e:
-        logging.error(f"Erro ao buscar produto '{search_term}' para edição/exclusão: {e}")
+        logging.error(f"Erro ao buscar produto '{search_term}' para edição/exclusão: {e}", exc_info=True) # Adiciona exc_info para mais detalhes
         await update.message.reply_text(
             "❌ Erro ao acessar os produtos. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
@@ -1059,6 +1063,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
