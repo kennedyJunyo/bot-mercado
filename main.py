@@ -926,20 +926,15 @@ async def select_product_callback(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
-        f"✏️ *Produto Selecionado:*
-"
-        f"📦 *{product['nome']}*
-"
-        f"🏷️ *Tipo:* {product['tipo']}
-"
-        f"🏭 *Marca:* {product['marca']}
-"
-        f"📏 *Unidade:* {product['unidade']}
-"
-        f"💰 *Preço:* R$ {format_price(product['preco'])}
-"
-        f"Escolha uma ação:",
-        reply_markup=reply_markup,
+        f"🗑️ *Excluir Produto:*\n" \
+        f"📦 *{product['nome']}*\n" \
+        f"🏷️ *Tipo:* {product['tipo']}\n" \
+        f"🏭 *Marca:* {product['marca']}\n" \
+        f"📏 *Unidade:* {product['unidade']}\n" \
+        f"💰 *Preço:* R$ {format_price(product['preco'])}\n" \
+        f"📝 *Observações:* {product['observacoes']}\n" \
+        f"Tem certeza que deseja excluir este produto?",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("✅ Confirmar"), KeyboardButton("❌ Cancelar")]], resize_keyboard=True),
         parse_mode="Markdown"
     )
     return AWAIT_EDIT_PRICE
@@ -1063,6 +1058,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
