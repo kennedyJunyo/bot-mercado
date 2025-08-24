@@ -1,10 +1,20 @@
-import os
-import logging
+# ========================
+# Imports
+# ========================
+# Standard library imports
 import asyncio
+import logging
+import os
 import re
+import threading
 import uuid
-from threading import Thread
+from typing import Optional  # Adicionado para melhor tipagem, se desejar
+
+# Third-party library imports
+# Flask
 from flask import Flask, request
+
+# Telegram Bot
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
@@ -19,8 +29,10 @@ from telegram.ext import (
     ConversationHandler,
     ContextTypes,
     filters,
-    CallbackQueryHandler
+    CallbackQueryHandler,
 )
+
+# Supabase
 from supabase import create_client, Client
 
 # ========================
@@ -124,19 +136,23 @@ def calculate_unit_price(unit_str, price):
         tipo_emb = match.group(2)
         tam_uni = float(match.group(3))
         uni_med = match.group(4).lower()
+
         if qtd_emb > 0:
             total = qtd_emb * tam_uni
             preco_emb = price / qtd_emb
+
             if uni_med in ['g', 'ml']:
                 return {'preco_por_embalagem': preco_emb,
                         'preco_por_100': price / total * 100,
                         'unidade': f"{qtd_emb} {tipo_emb} de {tam_uni}{uni_med}"}
+
             elif uni_med in ['kg', 'l']:
                 base = price / total
                 return {'preco_por_embalagem': preco_emb,
                         'preco_por_unidade_base': base,
                         'preco_por_100_base': base * 100,
                         'unidade': f"{qtd_emb} {tipo_emb} de {tam_uni}{uni_med}"}
+
             else:
                 return {'preco_por_embalagem': preco_emb,
                         'unidade': f"{qtd_emb} {tipo_emb} de {tam_uni}{uni_med}"}
@@ -182,9 +198,11 @@ async def get_grupo_id(user_id: int) -> str:
         resp = supabase.table("usuarios").select("grupo_id").eq("user_id", user_id).execute()
         if resp.data:
             return resp.data[0]['grupo_id']
+
         novo = str(uuid.uuid4())
         supabase.table("usuarios").insert({"user_id": user_id, "grupo_id": novo}).execute()
         return novo
+
     except Exception:
         return str(user_id)
 
@@ -193,16 +211,21 @@ async def adicionar_usuario_ao_grupo(novo_user_id: int, codigo_convite: str, con
         resp = supabase.table("usuarios").select("grupo_id").eq("grupo_id", codigo_convite).limit(1).execute()
         if not resp.data:
             return False, "❌ Código de convite inválido."
+
         grupo_id_para_adicionar = codigo_convite
+
         check_resp = supabase.table("usuarios").select("grupo_id").eq("user_id", novo_user_id).eq("grupo_id", grupo_id_para_adicionar).execute()
         if check_resp.data:
             return True, f"✅ Você já está no grupo '{grupo_id_para_adicionar}'."
+
         exists_resp = supabase.table("usuarios").select("user_id").eq("user_id", novo_user_id).execute()
         if exists_resp.data:
             supabase.table("usuarios").update({"grupo_id": grupo_id_para_adicionar}).eq("user_id", novo_user_id).execute()
         else:
             supabase.table("usuarios").insert({"user_id": novo_user_id, "grupo_id": grupo_id_para_adicionar}).execute()
+
         return True, f"✅ Você foi adicionado ao grupo '{grupo_id_para_adicionar}'!"
+
     except Exception:
         return False, "❌ Erro ao processar o convite. Tente novamente mais tarde."
 
@@ -226,13 +249,14 @@ def cancel_keyboard():
 # search_product_input, handle_search_product_input, list_products, ask_for_edit_delete_choice, handle_edit_delete_choice,
 # edit_price_callback, handle_edit_price_input, delete_product_callback, confirm_deletion,
 # ask_for_invite_code, handle_invite_code_input, inserir_codigo_callback, compartilhar_lista_callback)
-# [Insira aqui todas as funções handlers, exatamente como do seu código, sem deixar nenhuma de fora]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     grupo_id = await get_grupo_id(user_id)
     await update.message.reply_text(
-        f"🛒 *Bot de Compras Inteligente* 🛒\nSeu grupo compartilhado: `{grupo_id}`\n\nEscolha uma opção ou digite o nome de um produto para pesquisar:",
+        f"🛒 *Bot de Compras Inteligente* 🛒\n"
+        f"Seu grupo compartilhado: `{grupo_id}`\n"
+        f"Escolha uma opção ou digite o nome de um produto para pesquisar:",
         reply_markup=main_menu_keyboard(),
         parse_mode="Markdown"
     )
@@ -283,9 +307,11 @@ async def ask_for_invite_code(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_invite_code_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
+
     codigo_convite = update.message.text.strip()
     user_id = update.effective_user.id
     sucesso, mensagem = await adicionar_usuario_ao_grupo(user_id, codigo_convite)
+
     if sucesso:
         await update.message.reply_text(mensagem, reply_markup=main_menu_keyboard())
         return await list_products(update, context)
@@ -343,6 +369,7 @@ async def ask_for_product_data(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
+
     data = [item.strip() for item in update.message.text.split(",")]
     if len(data) < 5:
         await update.message.reply_text(
@@ -359,6 +386,7 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown"
         )
         return AWAIT_PRODUCT_DATA
+
     price_str = data[4].strip()
     price = parse_price(price_str)
     if price is None:
@@ -369,6 +397,7 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown"
         )
         return AWAIT_PRODUCT_DATA
+
     product = {
         'nome': data[0].title(),
         'tipo': data[1].title(),
@@ -377,9 +406,10 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         'preco': price_str,
         'observacoes': data[5] if len(data) > 5 else ""
     }
+
     unit_info = calculate_unit_price(product['unidade'], price)
     logging.info(f"Unit info calculado para {product['nome']}: {unit_info}")
-    
+
     message = f"📦 *Produto*: {product['nome']}\n"
     message += f"🏷️ *Tipo*: {product['tipo']}\n"
     message += f"🏭 *Marca*: {product['marca']}\n"
@@ -389,8 +419,8 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         message += f"📝 *Observações*: {product['observacoes']}\n"
     else:
         message += "\n"
+
     message += "📊 *Cálculo de Preço por Unidade:*\n"
-    
     if 'preco_por_kg' in unit_info:
         message += f"📊 *Preço por kg*: R$ {format_price(unit_info['preco_por_kg'])}\n"
     if 'preco_por_100g' in unit_info:
@@ -412,10 +442,12 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         message += f"📊 *Preço por metro*: R$ {format_price(unit_info['preco_por_metro'])}\n"
     if 'preco_por_folha' in unit_info:
         message += f"📊 *Preço por folha*: R$ {format_price(unit_info['preco_por_folha'])}\n"
+
     message += "\nDigite ✅ *Confirmar* para salvar ou ❌ *Cancelar* para corrigir"
-    
+
     context.user_data['current_product'] = product
     context.user_data['unit_info'] = unit_info
+
     await update.message.reply_text(
         message,
         reply_markup=ReplyKeyboardMarkup([[KeyboardButton("✅ Confirmar"), KeyboardButton("❌ Cancelar")]], resize_keyboard=True),
@@ -426,14 +458,18 @@ async def handle_product_data(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text != "✅ Confirmar":
         return await cancel(update, context)
+
     product = context.user_data.get('current_product')
     unit_info = context.user_data.get('unit_info')
+
     if not product or not unit_info:
         await update.message.reply_text("❌ Erro ao confirmar produto. Tente novamente.")
         return MAIN_MENU
+
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
+
         if 'preco_por_metro' in unit_info:
             unit_price_str = f"R$ {format_price(unit_info['preco_por_metro'])}/metro"
         elif 'preco_por_100g' in unit_info:
@@ -459,7 +495,7 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             unit_price_str = f"R$ {format_price(unit_info['preco_por_folha'])}/folha"
         else:
             unit_price_str = f"R$ {format_price(parse_price(product['preco']))}/unidade"
-        
+
         novo_produto = {
             "grupo_id": grupo_id,
             "nome": product['nome'],
@@ -470,19 +506,23 @@ async def confirm_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "observacoes": product['observacoes'],
             "preco_por_unidade_formatado": unit_price_str,
         }
+
         response = supabase.table("produtos").insert(novo_produto).execute()
         logging.info(f"Produto salvo no Supabase. Resposta: {response}")
+
         await update.message.reply_text(
             f"✅ Produto *{product['nome']}* salvo com sucesso na lista do grupo!",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
+
     except Exception as e:
         logging.error(f"Erro ao salvar produto no Supabase: {e}")
         await update.message.reply_text(
             "❌ Erro ao salvar produto. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
+
     return MAIN_MENU
 
 # ========================
@@ -498,14 +538,14 @@ async def search_product_input(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_search_product_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
-    
+
     # Verificação inicial para evitar que botões sejam tratados como pesquisa
     botoes_especiais = [
         "➕ Adicionar Produto", "✏️ Editar ou Excluir", "📋 Listar Produtos",
         "🔍 Pesquisar Produto", "ℹ️ Ajuda", "❌ Cancelar",
         "👪 Compartilhar Lista", "🔐 Inserir Código", "✅ Confirmar"
     ]
-    
+
     # Se a mensagem for um botão, não faz pesquisa - trata como comando
     if update.message.text.strip() in botoes_especiais:
         # Trata como comando do botão, não como pesquisa
@@ -528,17 +568,20 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
             # Para outros botões, volta ao menu principal
             await update.message.reply_text("⚠️ Por favor, use os botões do menu principal para navegar.", reply_markup=main_menu_keyboard())
             return MAIN_MENU
-    
+
     search_term = update.message.text.strip().lower()
     user_id = update.effective_user.id
+
     try:
         grupo_id = await get_grupo_id(user_id)
         # Corrigido: Selecionar explicitamente os campos necessários
         response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).ilike("nome", f"%{search_term}%").order("timestamp", desc=True).limit(10).execute()
         produtos_encontrados = response.data
+
         if not produtos_encontrados:
             await update.message.reply_text(f"📭 Nenhum produto encontrado para '{search_term}'.", reply_markup=main_menu_keyboard())
             return MAIN_MENU
+
         texto = f"🔍 *Resultados para '{search_term}':*\n"
         for i, produto in enumerate(produtos_encontrados):
             if i > 0: # Adiciona separador antes de cada item, exceto o primeiro
@@ -586,6 +629,7 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
                              preco_100ml = valor_principal_float * 100
                              texto += f"📊 Preço por 100ml: R$ {format_price(preco_100ml)}\n"
                          # Adicione outros casos conforme necessário (und, rolo, metro, etc.)
+
                      except ValueError:
                          # Se não conseguir converter o valor, mostra o texto original
                          texto += f"📊 {preco_unidade_texto}\n"
@@ -593,10 +637,13 @@ async def handle_search_product_input(update: Update, context: ContextTypes.DEFA
                      # Se não casar com o padrão esperado, mostra o texto original
                      texto += f"📊 {preco_unidade_texto}\n"
             # Se não houver preco_por_unidade_formatado, não mostra nada adicional
+
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+
     except Exception as e:
         logging.error(f"Erro ao pesquisar produtos no Supabase para user_id {user_id}: {e}")
         await update.message.reply_text("❌ Erro ao pesquisar produtos.", reply_markup=main_menu_keyboard())
+
     return MAIN_MENU
 
 # ========================
@@ -609,19 +656,21 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Corrigido: Selecionar explicitamente os campos necessários
         response = supabase.table("produtos").select("nome, tipo, marca, unidade, preco, observacoes, preco_por_unidade_formatado").eq("grupo_id", grupo_id).order("timestamp", desc=True).limit(20).execute()
         produtos_do_grupo = response.data
+
         if not produtos_do_grupo:
             await update.message.reply_text("📭 Nenhum produto na lista ainda.", reply_markup=main_menu_keyboard())
             return MAIN_MENU
+
         texto = "📋 *Lista de Produtos do seu Grupo:*\n"
         for produto in produtos_do_grupo:
             obs = f" ({produto['observacoes']})" if produto['observacoes'] else ""
             preco_unidade = produto.get('preco_por_unidade_formatado', '')
-            
+
             # Tratamento seguro da marca - só exibe se não estiver vazio
             marca_display = ""
             if produto.get('marca') and produto['marca'].strip():
                 marca_display = f" - {produto['marca']}"
-                
+
             # Novo layout: dividido em linhas
             if preco_unidade:
                 texto += f"🔹 *{produto['nome']}*{marca_display}\n"
@@ -631,10 +680,13 @@ async def list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 texto += f"🔹 *{produto['nome']}*{marca_display}\n"
                 texto += f"   📦 {produto['tipo']}\n"
                 texto += f"   {produto['unidade']} - R${format_price(produto['preco'])}{obs}\n"
+
         await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=main_menu_keyboard())
+
     except Exception as e:
         logging.error(f"Erro ao listar produtos do Supabase: {e}")
         await update.message.reply_text("❌ Erro ao acessar a lista.", reply_markup=main_menu_keyboard())
+
     return MAIN_MENU
 
 # ========================
@@ -657,6 +709,7 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
 
     search_term = update.message.text.strip().title()
     user_id = update.effective_user.id
+
     try:
         grupo_id = await get_grupo_id(user_id)
 
@@ -716,18 +769,19 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
 
         # Correção: Sempre listar produtos encontrados como texto com numeração
         context.user_data['pending_products'] = matching_products # Armazena a lista para uso posterior
-        texto_lista = f"🔍 Encontrei {len(matching_products)} produto(s) com o nome semelhante a '{search_term}'.\n\n"
-        texto_lista += "Por favor, digite o *número* do produto que deseja editar ou excluir:\n\n"
-
+        texto_lista = f"🔍 Encontrei {len(matching_products)} produto(s) com o nome semelhante a '{search_term}'.\n"
+        texto_lista += "Por favor, digite o *número* do produto que deseja editar ou excluir:\n"
         for idx, prod in enumerate(matching_products):
             marca = f" - {prod['marca']}" if prod.get('marca') and prod['marca'].strip() else ""
             preco_str = format_price(prod['preco'])
             obs = f" ({prod['observacoes']})" if prod.get('observacoes') and prod['observacoes'].strip() else ""
+
             # Formato: 1. Nome - Marca (Tipo, Unidade, R$Preco) (Obs)
             texto_lista += f"{idx + 1}. *{prod['nome']}*{marca} ({prod['tipo']}, {prod['unidade']}, R${preco_str}){obs}\n"
 
         # Correção: Garantir botão de Cancelar na tela de escolha
         await update.message.reply_text(texto_lista, parse_mode="Markdown", reply_markup=cancel_keyboard())
+
         # Muda o estado para esperar o número digitado pelo usuário
         return AWAIT_ENTRY_CHOICE
 
@@ -738,6 +792,7 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
             reply_markup=main_menu_keyboard()
         )
         return MAIN_MENU
+
 # ========================
 # Processar escolha por número (Correção: Editar/Excluir)
 # ========================
@@ -782,14 +837,15 @@ async def process_entry_choice(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🏷️ *Tipo:* {selected_product['tipo']}\n"
         f"📏 *Unidade:* {selected_product['unidade']}\n"
         f"💰 *Preço:* R$ {format_price(selected_product['preco'])}"
-        f"{obs_display}\n\n"
+        f"{obs_display}\n"
         f"Escolha uma ação:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
+
     # Sai do estado AWAIT_ENTRY_CHOICE e permite que os callbacks tomem o controle
     return MAIN_MENU
-    
+
 # ========================
 # Callbacks para editar/excluir
 # ========================
@@ -798,15 +854,19 @@ async def edit_price_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     product_id = query.data.split("_")[2]
     user_id = query.from_user.id
+
     try:
         grupo_id = await get_grupo_id(user_id)
         response = supabase.table("produtos").select("*").eq("id", product_id).eq("grupo_id", grupo_id).limit(1).execute()
         product = response.data[0] if response.data else None
+
         if not product:
             await query.edit_message_text("❌ Produto não encontrado ou você não tem permissão para editá-lo.")
             await query.message.reply_text("...", reply_markup=main_menu_keyboard())
             return MAIN_MENU
+
         context.user_data['editing_product'] = product
+
         await query.edit_message_text(
             f"✏️ *Editar Preço do Produto:*\n"
             f"📦 *{product['nome']}*\n"
@@ -819,6 +879,7 @@ async def edit_price_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await query.message.reply_text("...", reply_markup=cancel_keyboard())
         return AWAIT_EDIT_PRICE
+
     except Exception as e:
         logging.error(f"Erro ao preparar edição de preço para produto ID {product_id}: {e}")
         await query.edit_message_text("❌ Erro ao preparar edição. Tente novamente mais tarde.")
@@ -828,6 +889,7 @@ async def edit_price_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_edit_price_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == "❌ Cancelar":
         return await cancel(update, context)
+
     new_price_str = update.message.text.strip()
     new_price = parse_price(new_price_str)
     if new_price is None:
@@ -838,18 +900,23 @@ async def handle_edit_price_input(update: Update, context: ContextTypes.DEFAULT_
             parse_mode="Markdown"
         )
         return AWAIT_EDIT_PRICE
+
     product = context.user_data.get('editing_product')
     if not product:
         await update.message.reply_text("❌ Erro ao editar preço. Tente novamente.")
         return MAIN_MENU
+
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
+
         check_response = supabase.table("produtos").select("id, preco_por_unidade_formatado").eq("id", product['id']).eq("grupo_id", grupo_id).limit(1).execute()
         if not check_response.data:
             await update.message.reply_text("❌ Você não tem permissão para editar este produto.")
             return MAIN_MENU
+
         unit_info = calculate_unit_price(product['unidade'], new_price)
+
         if 'preco_por_metro' in unit_info:
             new_unit_price_str = f"R$ {format_price(unit_info['preco_por_metro'])}/metro"
         elif 'preco_por_100g' in unit_info:
@@ -875,24 +942,28 @@ async def handle_edit_price_input(update: Update, context: ContextTypes.DEFAULT_
             new_unit_price_str = f"R$ {format_price(unit_info['preco_por_folha'])}/folha"
         else:
             new_unit_price_str = f"R$ {format_price(new_price)}/unidade"
-        
+
         updated_product = {
             "preco": new_price,
             "preco_por_unidade_formatado": new_unit_price_str,
         }
+
         response = supabase.table("produtos").update(updated_product).eq("id", product['id']).execute()
         logging.info(f"Produto ID {product['id']} atualizado no Supabase. Resposta: {response}")
+
         await update.message.reply_text(
             f"✅ Preço do produto *{product['nome']}* atualizado com sucesso para R$ {format_price(new_price)}!",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
+
     except Exception as e:
         logging.error(f"Erro ao atualizar preço do produto ID {product['id']}: {e}")
         await update.message.reply_text(
             "❌ Erro ao atualizar preço. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
+
     return MAIN_MENU
 
 async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -900,15 +971,19 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     product_id = query.data.split("_")[1]
     user_id = query.from_user.id
+
     try:
         grupo_id = await get_grupo_id(user_id)
         response = supabase.table("produtos").select("*").eq("id", product_id).eq("grupo_id", grupo_id).limit(1).execute()
         product = response.data[0] if response.data else None
+
         if not product:
             await query.edit_message_text("❌ Produto não encontrado ou você não tem permissão para excluí-lo.")
             await query.message.reply_text("...", reply_markup=main_menu_keyboard())
             return MAIN_MENU
+
         context.user_data['deleting_product'] = product
+
         await query.edit_message_text(
             f"🗑️ *Excluir Produto:*\n"
             f"📦 *{product['nome']}*\n"
@@ -922,6 +997,7 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
             parse_mode="Markdown"
         )
         return CONFIRM_DELETION
+
     except Exception as e:
         logging.error(f"Erro ao preparar exclusão para produto ID {product_id}: {e}")
         await query.edit_message_text("❌ Erro ao preparar exclusão. Tente novamente mais tarde.")
@@ -931,30 +1007,37 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
 async def confirm_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text != "✅ Confirmar":
         return await cancel(update, context)
+
     product = context.user_data.get('deleting_product')
     if not product:
         await update.message.reply_text("❌ Erro ao confirmar exclusão. Tente novamente.")
         return MAIN_MENU
+
     user_id = update.effective_user.id
     try:
         grupo_id = await get_grupo_id(user_id)
+
         check_response = supabase.table("produtos").select("id").eq("id", product['id']).eq("grupo_id", grupo_id).limit(1).execute()
         if not check_response.data:
             await update.message.reply_text("❌ Você não tem permissão para excluir este produto.")
             return MAIN_MENU
+
         response = supabase.table("produtos").delete().eq("id", product['id']).execute()
         logging.info(f"Produto ID {product['id']} excluído do Supabase. Resposta: {response}")
+
         await update.message.reply_text(
             f"✅ Produto *{product['nome']}* excluído com sucesso!",
             reply_markup=main_menu_keyboard(),
             parse_mode="Markdown"
         )
+
     except Exception as e:
         logging.error(f"Erro ao excluir produto ID {product['id']}: {e}")
         await update.message.reply_text(
             "❌ Erro ao excluir produto. Tente novamente mais tarde.",
             reply_markup=main_menu_keyboard()
         )
+
     return MAIN_MENU
 
 # ========================
@@ -991,7 +1074,6 @@ async def select_product_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     product_id = query.data.split("_")[2]  # select_prod_{id}
-
     pending_products = context.user_data.get('pending_products', [])
     product = next((p for p in pending_products if p['id'] == product_id), None)
 
@@ -1001,7 +1083,6 @@ async def select_product_callback(update: Update, context: ContextTypes.DEFAULT_
         return MAIN_MENU
 
     context.user_data['editing_product'] = product
-
     keyboard = [
         [InlineKeyboardButton("✏️ Editar Preço", callback_data=f"edit_price_{product['id']}")],
         [InlineKeyboardButton("🗑️ Excluir", callback_data=f"delete_{product['id']}")]
@@ -1041,7 +1122,7 @@ async def start_bot():
     bot_application.add_handler(CallbackQueryHandler(edit_price_callback, pattern="^edit_price_"))
     bot_application.add_handler(CallbackQueryHandler(delete_product_callback, pattern="^delete_"))
     bot_application.add_handler(CallbackQueryHandler(select_product_callback, pattern="^select_prod_"))
-    
+
     # ========================
     # ConversationHandler (fluxos de conversa)
     # ========================
@@ -1086,8 +1167,8 @@ async def start_bot():
             AWAIT_ENTRY_CHOICE: [
                 MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Permite cancelar
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_entry_choice), # Handler para o número
-        ],
-    },
+            ],
+        },
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^❌ Cancelar$"), cancel),
@@ -1144,16 +1225,6 @@ if __name__ == "__main__":
         bot_event_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         bot_event_loop.close()
         logging.info("Loop de eventos encerrado.")
+
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
-
-
-
-
-
-
-
-
-
-
-
