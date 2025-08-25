@@ -794,7 +794,7 @@ await update.message.reply_text(
     parse_mode="Markdown"
 )
 # Sai do estado AWAIT_ENTRY_CHOICE e entra no estado que aguarda o clique nos botões inline
-return AWAIT_ACTION_CHOICE # <--- LINHA CORRIGIDA
+    return AWAIT_ACTION_CHOICE # <--- LINHA CORRIGIDA
     
 # ========================
 # Callbacks para editar/excluir
@@ -1157,6 +1157,7 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
 
