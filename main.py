@@ -717,7 +717,8 @@ async def handle_edit_delete_choice(update: Update, context: ContextTypes.DEFAUL
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
-            return AWAIT_EDIT_PRICE # Retornar o estado correto aqui
+            # Correção: Vai para o estado que espera o clique nos botões inline
+            return AWAIT_ACTION_CHOICE # <--- LINHA CORRIGIDA
 
         # Correção: Sempre listar produtos encontrados como texto com numeração
         context.user_data['pending_products'] = matching_products # Armazena a lista para uso posterior
@@ -781,19 +782,19 @@ async def process_entry_choice(update: Update, context: ContextTypes.DEFAULT_TYP
     marca_display = f" - {selected_product['marca']}" if selected_product.get('marca') and selected_product['marca'].strip() else ""
     obs_display = f"\n📝 *Observações:* {selected_product['observacoes']}" if selected_product.get('observacoes') and selected_product['observacoes'].strip() else ""
 
-    await update.message.reply_text(
-        f"✏️ *Produto Selecionado:*\n"
-        f"📦 *{selected_product['nome']}*{marca_display}\n"
-        f"🏷️ *Tipo:* {selected_product['tipo']}\n"
-        f"📏 *Unidade:* {selected_product['unidade']}\n"
-        f"💰 *Preço:* R$ {format_price(selected_product['preco'])}"
-        f"{obs_display}\n\n"
-        f"Escolha uma ação:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-    # Sai do estado AWAIT_ENTRY_CHOICE e permite que os callbacks tomem o controle
-    return MAIN_MENU
+await update.message.reply_text(
+    f"✏️ *Produto Selecionado:*\n"
+    f"📦 *{selected_product['nome']}*{marca_display}\n"
+    f"🏷️ *Tipo:* {selected_product['tipo']}\n"
+    f"📏 *Unidade:* {selected_product['unidade']}\n"
+    f"💰 *Preço:* R$ {format_price(selected_product['preco'])}"
+    f"{obs_display}\n\n"
+    f"Escolha uma ação:",
+    reply_markup=reply_markup,
+    parse_mode="Markdown"
+)
+# Sai do estado AWAIT_ENTRY_CHOICE e entra no estado que aguarda o clique nos botões inline
+return AWAIT_ACTION_CHOICE # <--- LINHA CORRIGIDA
     
 # ========================
 # Callbacks para editar/excluir
@@ -1097,9 +1098,6 @@ async def start_bot():
              # Opcional: Adicionar um handler para cancelar aqui também, se quiser um botão inline de cancelar
              # MessageHandler(filters.Regex("^❌ Cancelar$"), cancel), # Se tiver um botão de cancelar inline
         ],
-        AWAIT_EDIT_PRICE: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_price_input),
-        ],
     },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -1159,5 +1157,6 @@ if __name__ == "__main__":
         logging.info("Loop de eventos encerrado.")
     logging.info("Bot encerrado.")
     logging.info("=" * 50)
+
 
 
